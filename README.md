@@ -25,8 +25,11 @@ Implemented public contracts:
 
 - `TradingCalendarV1`: deterministic session lookup from an explicit versioned session set.
 - `MarketDataReaderV1`: read-only, exact-`as_of` access to neutral `stock_daily` facts without an application Universe filter.
+- `DataQualitySnapshotV1`: immutable, versioned quality facts for each dataset.
+- `ReadinessMarkerV1`: strict, atomic publication that references a verified quality snapshot.
 
 Contract semantics and compatibility rules are documented in [A1_CALENDAR_MARKET_DATA_V1.md](./docs/contracts/A1_CALENDAR_MARKET_DATA_V1.md).
+Quality and atomic publication semantics are documented in [A2_QUALITY_READINESS_V1.md](./docs/contracts/A2_QUALITY_READINESS_V1.md).
 
 Run the repository checks with:
 
