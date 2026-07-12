@@ -2,5 +2,5 @@
 set -eu
 
 python3 -m compileall -q src tests
-python3 -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m unittest discover -s tests -v
 git diff --check

@@ -21,6 +21,13 @@ A0 golden contract fixtures
 -> A3 ArtifactEnvelopeV1 + OutcomeCalculatorV1
 ```
 
+Implemented public contracts:
+
+- `TradingCalendarV1`: deterministic session lookup from an explicit versioned session set.
+- `MarketDataReaderV1`: read-only, exact-`as_of` access to neutral `stock_daily` facts without an application Universe filter.
+
+Contract semantics and compatibility rules are documented in [A1_CALENDAR_MARKET_DATA_V1.md](./docs/contracts/A1_CALENDAR_MARKET_DATA_V1.md).
+
 Run the repository checks with:
 
 ```bash

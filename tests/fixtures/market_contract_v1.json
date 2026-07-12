@@ -1,0 +1,58 @@
+{
+  "schema_version": "market-contract-fixture.v1",
+  "calendar_source_version": "fixture-calendar.2026-06.v1",
+  "sessions": [
+    "2026-06-02",
+    "2026-06-03",
+    "2026-06-05",
+    "2026-06-08"
+  ],
+  "market_source_version": "fixture-market.2026-06-05.v1",
+  "stock_daily": [
+    {
+      "stock_code": "000001",
+      "stock_name": "深主板A",
+      "trade_date": "2026-06-05",
+      "open": 10.0,
+      "high": 10.8,
+      "low": 9.9,
+      "close": 10.6,
+      "preclose": 10.0,
+      "volume": 1200000.0,
+      "amount": 12500000.0,
+      "pct_chg": 6.0,
+      "turnover": 2.5,
+      "is_st": 0
+    },
+    {
+      "stock_code": "688001",
+      "stock_name": "科创A",
+      "trade_date": "2026-06-05",
+      "open": 20.0,
+      "high": 21.0,
+      "low": 19.8,
+      "close": 20.5,
+      "preclose": 20.0,
+      "volume": 800000.0,
+      "amount": 16400000.0,
+      "pct_chg": 2.5,
+      "turnover": 1.2,
+      "is_st": 0
+    },
+    {
+      "stock_code": "600001",
+      "stock_name": "主板A",
+      "trade_date": "2026-06-03",
+      "open": 8.0,
+      "high": 8.2,
+      "low": 7.9,
+      "close": 8.1,
+      "preclose": 8.0,
+      "volume": 500000.0,
+      "amount": 4050000.0,
+      "pct_chg": 1.25,
+      "turnover": 0.8,
+      "is_st": 0
+    }
+  ]
+}

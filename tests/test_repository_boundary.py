@@ -4,6 +4,8 @@ import ast
 from pathlib import Path
 import unittest
 
+from yifei_platform import __version__
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "src"
@@ -27,10 +29,7 @@ class RepositoryBoundaryTest(unittest.TestCase):
         self.assertEqual([], violations)
 
     def test_package_version_is_exposed(self) -> None:
-        namespace: dict[str, object] = {}
-        init_path = SOURCE_ROOT / "yifei_platform" / "__init__.py"
-        exec(init_path.read_text(encoding="utf-8"), namespace)
-        self.assertEqual("0.1.0", namespace["__version__"])
+        self.assertEqual("0.1.0", __version__)
 
 
 if __name__ == "__main__":
