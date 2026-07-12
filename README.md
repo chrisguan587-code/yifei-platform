@@ -2,6 +2,18 @@
 
 Shared Platform owns market facts and versioned neutral capabilities used by Yifei applications.
 
+## Bootstrap migration
+
+`yifei-platform-bootstrap` is a one-time migration tool, not the Platform
+production data supply chain. Its legacy source path is required explicitly on
+the command line and is never a package default or application dependency.
+
+It publishes an independent SQLite database containing only `stock_daily`,
+`trading_calendar`, and `platform_metadata`, then publishes the immutable
+`v4-market-core` readiness marker. The tool retires after a Platform-owned
+updater has run for five consecutive trading sessions without the legacy data
+task.
+
 ```text
 Applications -> Versioned Shared Platform
 

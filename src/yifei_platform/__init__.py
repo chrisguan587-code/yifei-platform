@@ -1,5 +1,11 @@
 """Shared market facts and neutral capabilities for Yifei applications."""
 
+from .bootstrap import (
+    BOOTSTRAP_VERSION,
+    BootstrapResult,
+    bootstrap_market_data,
+    load_trading_sessions,
+)
 from .calendar import CalendarRangeError, TradeDateContextV1, TradingCalendarV1
 from .board_capital import (
     BoardDailyFactV1,
@@ -33,9 +39,11 @@ from .readiness import (
 )
 from .outcomes import ForwardOutcomeV1, OutcomeCalculatorV1, OutcomeResultV1, OutcomeStatus
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
+    "BOOTSTRAP_VERSION",
+    "BootstrapResult",
     "CalendarRangeError",
     "BoardDailyFactV1",
     "BoardFactReaderV1",
@@ -70,5 +78,7 @@ __all__ = [
     "StockDailyReadResultV1",
     "TradeDateContextV1",
     "TradingCalendarV1",
+    "bootstrap_market_data",
+    "load_trading_sessions",
     "__version__",
 ]

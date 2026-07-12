@@ -29,7 +29,7 @@ class RepositoryBoundaryTest(unittest.TestCase):
         self.assertEqual([], violations)
 
     def test_package_version_is_exposed(self) -> None:
-        self.assertEqual("0.1.0", __version__)
+        self.assertEqual("0.2.0", __version__)
 
 
 if __name__ == "__main__":
