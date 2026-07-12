@@ -29,10 +29,13 @@ Implemented public contracts:
 - `ReadinessMarkerV1`: strict, atomic publication that references a verified quality snapshot.
 - `ArtifactEnvelopeV1`: content-addressed producer/payload metadata with immutable storage and indexing.
 - `OutcomeCalculatorV1`: neutral T+N, MFE, MAE, and close-drawdown calculation for caller-owned samples.
+- `EligibilityPrimitiveV1`: versioned segment/ST/liquidity facts without an eligibility decision.
+- `BoardFactReaderV1` and `CapitalFactReaderV1`: exact-date board and sector-capital facts without V3 score/action semantics.
 
 Contract semantics and compatibility rules are documented in [A1_CALENDAR_MARKET_DATA_V1.md](./docs/contracts/A1_CALENDAR_MARKET_DATA_V1.md).
 Quality and atomic publication semantics are documented in [A2_QUALITY_READINESS_V1.md](./docs/contracts/A2_QUALITY_READINESS_V1.md).
 Artifact and outcome semantics are documented in [A3_ARTIFACT_OUTCOME_V1.md](./docs/contracts/A3_ARTIFACT_OUTCOME_V1.md).
+B1 fact boundaries are documented in [B1_ELIGIBILITY_BOARD_CAPITAL_V1.md](./docs/contracts/B1_ELIGIBILITY_BOARD_CAPITAL_V1.md).
 
 Run the repository checks with:
 

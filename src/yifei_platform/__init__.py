@@ -1,6 +1,14 @@
 """Shared market facts and neutral capabilities for Yifei applications."""
 
 from .calendar import CalendarRangeError, TradeDateContextV1, TradingCalendarV1
+from .board_capital import (
+    BoardDailyFactV1,
+    BoardFactReaderV1,
+    CapitalFactReaderV1,
+    FactReadResultV1,
+    SectorCapitalFactV1,
+)
+from .eligibility import EligibilityFactsV1, EligibilityPrimitiveV1, FactState, MarketSegment
 from .artifacts import (
     ArtifactConflictError,
     ArtifactEnvelopeV1,
@@ -29,6 +37,15 @@ __version__ = "0.1.0"
 
 __all__ = [
     "CalendarRangeError",
+    "BoardDailyFactV1",
+    "BoardFactReaderV1",
+    "CapitalFactReaderV1",
+    "EligibilityFactsV1",
+    "EligibilityPrimitiveV1",
+    "FactReadResultV1",
+    "FactState",
+    "MarketSegment",
+    "SectorCapitalFactV1",
     "ArtifactConflictError",
     "ArtifactEnvelopeV1",
     "ArtifactIntegrityError",
