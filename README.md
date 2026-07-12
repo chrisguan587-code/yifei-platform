@@ -24,5 +24,7 @@ A0 golden contract fixtures
 Run the repository checks with:
 
 ```bash
-python3 -m unittest discover -s tests -v
+./scripts/quality_gate.sh
 ```
+
+The product-family quality process is defined in [CODE_QUALITY_STANDARD.md](./docs/CODE_QUALITY_STANDARD.md).
