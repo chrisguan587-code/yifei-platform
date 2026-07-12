@@ -43,4 +43,10 @@ Run the repository checks with:
 ./scripts/quality_gate.sh
 ```
 
+Before creating a release tag, run the source-distribution and wheel gate:
+
+```bash
+./scripts/release_gate.sh
+```
+
 The product-family quality process is defined in [CODE_QUALITY_STANDARD.md](./docs/CODE_QUALITY_STANDARD.md).
