@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yifei-platform"
-version = "0.2.0"
+version = "0.3.0"
 description = "Versioned shared market facts and neutral capabilities for Yifei applications."
 requires-python = ">=3.11"
 
 [project.scripts]
 yifei-platform-bootstrap = "yifei_platform.bootstrap_cli:main"
+yifei-platform-publish-transitional = "yifei_platform.transitional_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

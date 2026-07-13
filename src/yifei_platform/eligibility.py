@@ -2,8 +2,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import re
 
 from .market_data import StockDailyFactV1
+
+
+HISTORICAL_ST_RULE_VERSION = "historical-st.v1"
+
+
+@dataclass(frozen=True)
+class HistoricalStFactV1:
+    stock_code: str
+    as_of: str
+    raw_is_st: bool | None
+    name_st_signal: bool
+    derived_is_st: bool
+    reason_codes: tuple[str, ...]
+    rule_version: str = HISTORICAL_ST_RULE_VERSION
+
+
+def derive_historical_st_v1(fact: StockDailyFactV1) -> HistoricalStFactV1:
+    normalized_name = (fact.stock_name or "").strip().upper()
+    name_signal = re.match(r"^\*?ST(?![A-Z0-9])", normalized_name) is not None
+    derived = fact.is_st is True or name_signal
+    reasons = tuple(
+        reason
+        for matched, reason in (
+            (fact.is_st is True, "raw_is_st_true"),
+            (name_signal, "historical_name_st_prefix"),
+        )
+        if matched
+    ) or ("no_st_evidence",)
+    return HistoricalStFactV1(
+        stock_code=fact.stock_code,
+        as_of=fact.trade_date,
+        raw_is_st=fact.is_st,
+        name_st_signal=name_signal,
+        derived_is_st=derived,
+        reason_codes=reasons,
+    )
 
 
 class MarketSegment(str, Enum):

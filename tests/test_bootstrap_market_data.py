@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import sqlite3
 import tempfile
 import unittest
 
-from yifei_platform.bootstrap import bootstrap_market_data, load_trading_sessions
+from yifei_platform.bootstrap import (
+    bootstrap_market_data,
+    load_market_metadata,
+    load_trading_sessions,
+    publish_transitional_daily_market_data,
+)
 from yifei_platform.readiness import ReadinessStoreV1
 
 
@@ -50,6 +56,10 @@ class BootstrapMarketDataTest(unittest.TestCase):
             bundle="v4-market-core", as_of="2026-07-10"
         )
         self.assertEqual(("stock_daily",), marker.required_datasets)
+        self.assertEqual(
+            "bootstrap-market-data.v1",
+            load_market_metadata(self.target)["producer_version"],
+        )
 
     def test_output_survives_source_removal_and_repeat_is_idempotent(self) -> None:
         first = self._publish()
@@ -75,6 +85,92 @@ class BootstrapMarketDataTest(unittest.TestCase):
             )
         self.assertFalse(self.target.exists())
         self.assertFalse(self.readiness.exists())
+
+    def test_transitional_daily_requires_health_and_atomically_advances_date(self) -> None:
+        self._publish()
+        with sqlite3.connect(self.source) as connection:
+            connection.execute(
+                "INSERT INTO stock_daily VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("000001", "A", "2026-07-13", 1, 1, 1, 1, 1, 10, 300, 0, 1, 0),
+            )
+        health = self.root / "health.json"
+        health.write_text(json.dumps({
+            "trade_date": "2026-07-13",
+            "stock_daily_date": "2026-07-13",
+            "stock_daily_rows": 1,
+            "status": "success",
+            "final_gate": "ok",
+        }), encoding="utf-8")
+
+        result = publish_transitional_daily_market_data(
+            source_path=self.source,
+            source_health_path=health,
+            target_path=self.target,
+            readiness_root=self.readiness,
+            as_of="2026-07-13",
+            published_at="2026-07-13T17:45:00+08:00",
+        )
+
+        self.assertEqual("2026-07-13", result.as_of)
+        self.assertEqual(
+            ("2026-07-09", "2026-07-10", "2026-07-13"),
+            load_trading_sessions(self.target),
+        )
+        marker = ReadinessStoreV1(self.readiness).read_ready(
+            bundle="v4-market-core", as_of="2026-07-13"
+        )
+        self.assertEqual("transitional-daily-market-data.v1", marker.producer_version)
+        repeated = publish_transitional_daily_market_data(
+            source_path=self.source,
+            source_health_path=health,
+            target_path=self.target,
+            readiness_root=self.readiness,
+            as_of="2026-07-13",
+            published_at="2026-07-13T19:00:00+08:00",
+        )
+        self.assertEqual(result, repeated)
+
+    def test_transitional_daily_rejects_unready_or_mismatched_health(self) -> None:
+        self._publish()
+        original = self.target.read_bytes()
+        health = self.root / "health.json"
+        health.write_text(json.dumps({
+            "trade_date": "2026-07-13",
+            "stock_daily_date": "2026-07-13",
+            "stock_daily_rows": 1,
+            "status": "failed",
+            "final_gate": "hard_fail",
+        }), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            publish_transitional_daily_market_data(
+                source_path=self.source,
+                source_health_path=health,
+                target_path=self.target,
+                readiness_root=self.readiness,
+                as_of="2026-07-13",
+                published_at="2026-07-13T17:45:00+08:00",
+            )
+        self.assertEqual(original, self.target.read_bytes())
+        self.assertIsNone(ReadinessStoreV1(self.readiness).read_ready(
+            bundle="v4-market-core", as_of="2026-07-13"
+        ))
+
+    def test_transitional_same_day_retry_rejects_changed_source_content(self) -> None:
+        self.test_transitional_daily_requires_health_and_atomically_advances_date()
+        health = self.root / "health.json"
+        with sqlite3.connect(self.source) as connection:
+            connection.execute(
+                "UPDATE stock_daily SET amount=999 WHERE trade_date='2026-07-13'"
+            )
+        with self.assertRaisesRegex(ValueError, "explicit correction version"):
+            publish_transitional_daily_market_data(
+                source_path=self.source,
+                source_health_path=health,
+                target_path=self.target,
+                readiness_root=self.readiness,
+                as_of="2026-07-13",
+                published_at="2026-07-13T20:00:00+08:00",
+            )
 
     def _publish(self):
         return bootstrap_market_data(

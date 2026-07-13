@@ -2,9 +2,12 @@
 
 from .bootstrap import (
     BOOTSTRAP_VERSION,
+    TRANSITIONAL_DAILY_VERSION,
     BootstrapResult,
     bootstrap_market_data,
+    load_market_metadata,
     load_trading_sessions,
+    publish_transitional_daily_market_data,
 )
 from .calendar import CalendarRangeError, TradeDateContextV1, TradingCalendarV1
 from .board_capital import (
@@ -14,7 +17,15 @@ from .board_capital import (
     FactReadResultV1,
     SectorCapitalFactV1,
 )
-from .eligibility import EligibilityFactsV1, EligibilityPrimitiveV1, FactState, MarketSegment
+from .eligibility import (
+    HISTORICAL_ST_RULE_VERSION,
+    EligibilityFactsV1,
+    EligibilityPrimitiveV1,
+    FactState,
+    HistoricalStFactV1,
+    MarketSegment,
+    derive_historical_st_v1,
+)
 from .artifacts import (
     ArtifactConflictError,
     ArtifactEnvelopeV1,
@@ -39,11 +50,12 @@ from .readiness import (
 )
 from .outcomes import ForwardOutcomeV1, OutcomeCalculatorV1, OutcomeResultV1, OutcomeStatus
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "BOOTSTRAP_VERSION",
     "BootstrapResult",
+    "TRANSITIONAL_DAILY_VERSION",
     "CalendarRangeError",
     "BoardDailyFactV1",
     "BoardFactReaderV1",
@@ -52,6 +64,8 @@ __all__ = [
     "EligibilityPrimitiveV1",
     "FactReadResultV1",
     "FactState",
+    "HISTORICAL_ST_RULE_VERSION",
+    "HistoricalStFactV1",
     "MarketSegment",
     "SectorCapitalFactV1",
     "ArtifactConflictError",
@@ -79,6 +93,9 @@ __all__ = [
     "TradeDateContextV1",
     "TradingCalendarV1",
     "bootstrap_market_data",
+    "derive_historical_st_v1",
+    "load_market_metadata",
     "load_trading_sessions",
+    "publish_transitional_daily_market_data",
     "__version__",
 ]

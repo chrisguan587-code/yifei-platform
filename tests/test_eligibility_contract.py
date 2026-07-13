@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from yifei_platform.eligibility import EligibilityPrimitiveV1, FactState, MarketSegment
+from yifei_platform.eligibility import (
+    EligibilityPrimitiveV1,
+    FactState,
+    MarketSegment,
+    derive_historical_st_v1,
+)
 from yifei_platform.market_data import StockDailyFactV1
 
 
@@ -39,10 +44,26 @@ class EligibilityContractTest(unittest.TestCase):
                 result = primitive.evaluate(self._fact(code, is_st=False), source_version="market.v1")
                 self.assertEqual(expected, result.segment)
 
+    def test_historical_st_preserves_raw_and_uses_daily_name_prefix(self) -> None:
+        polluted = self._fact("000001", is_st=False, stock_name="*ST测试")
+        derived = derive_historical_st_v1(polluted)
+        self.assertFalse(derived.raw_is_st)
+        self.assertTrue(derived.name_st_signal)
+        self.assertTrue(derived.derived_is_st)
+        self.assertEqual(("historical_name_st_prefix",), derived.reason_codes)
+
+        raw = derive_historical_st_v1(
+            self._fact("000002", is_st=True, stock_name="正常名称")
+        )
+        self.assertTrue(raw.derived_is_st)
+        self.assertEqual(("raw_is_st_true",), raw.reason_codes)
+
     @staticmethod
-    def _fact(code: str, *, is_st: bool | None) -> StockDailyFactV1:
+    def _fact(
+        code: str, *, is_st: bool | None, stock_name: str = "测试"
+    ) -> StockDailyFactV1:
         return StockDailyFactV1(
-            stock_code=code, stock_name="测试", trade_date="2026-07-10",
+            stock_code=code, stock_name=stock_name, trade_date="2026-07-10",
             open=1.0, high=1.0, low=1.0, close=1.0, preclose=1.0,
             volume=100.0, amount=123456.0, pct_chg=0.0, turnover=1.2, is_st=is_st,
         )

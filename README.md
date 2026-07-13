@@ -14,6 +14,13 @@ It publishes an independent SQLite database containing only `stock_daily`,
 updater has run for five consecutive trading sessions without the legacy data
 task.
 
+During the bounded transition, `yifei-platform-publish-transitional` advances
+the public database only after an explicitly supplied same-day source health
+artifact passes. It is specified in
+[`C1_TRANSITIONAL_DAILY_PUBLISHER_V1.md`](./docs/contracts/C1_TRANSITIONAL_DAILY_PUBLISHER_V1.md)
+and has the same five-session retirement condition. It is separate from the
+one-time Bootstrap command.
+
 ```text
 Applications -> Versioned Shared Platform
 
