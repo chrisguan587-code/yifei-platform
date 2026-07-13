@@ -36,12 +36,15 @@ V1 definitions:
 - MAE: minimum future daily low over the same interval versus entry.
 - Max drawdown: largest peak-to-subsequent-close decline, beginning with entry close. Close-based drawdown avoids unknowable intraday high/low ordering.
 
-Observation-day high/low are excluded because the observation is captured at that day's close. Missing entry, target, intermediate OHLC, or unpublished sessions return explicit unavailable results; values are never filled with zero.
+Observation-day high/low are excluded because the observation is captured at that day's close. Missing entry, target, or intermediate OHLC returns an explicit unavailable result; values are never filled with zero. When the caller supplies an explicit `outcome_as_of`, a target beyond that cutoff is pending rather than unavailable.
+
+`PriceLineageGuardV1` is an opt-in neutral quality guard. Version `price-lineage-guard.candidate.v1` compares each session's `preclose` with the preceding session's `close` using a frozen 0.1% relative tolerance. Missing lineage inputs or a larger discontinuity make affected windows unavailable; the calculator does not reinterpret the discontinuity as a return.
 
 ## Compatibility and Non-goals
 
 - V1 does not select V3 CanonicalEvents or V4 Setups.
 - V1 does not aggregate win rates or write application attribution state.
 - `price_basis_version` must state raw/adjusted and corporate-action semantics supplied by the data producer. V1 does not silently transform prices.
+- Applications publishing return, MFE, MAE, or win-rate conclusions from mixed-source unadjusted history must enable a versioned price-lineage guard.
 - Metric formulas and observation timing cannot change within v1.
 - Adding a new metric is backward compatible; changing an existing formula requires a new schema version.

@@ -48,9 +48,15 @@ from .readiness import (
     ReadinessMarkerV1,
     ReadinessStoreV1,
 )
-from .outcomes import ForwardOutcomeV1, OutcomeCalculatorV1, OutcomeResultV1, OutcomeStatus
+from .outcomes import (
+    ForwardOutcomeV1,
+    OutcomeCalculatorV1,
+    OutcomeResultV1,
+    OutcomeStatus,
+    PriceLineageGuardV1,
+)
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "BOOTSTRAP_VERSION",
@@ -82,6 +88,7 @@ __all__ = [
     "OutcomeCalculatorV1",
     "OutcomeResultV1",
     "OutcomeStatus",
+    "PriceLineageGuardV1",
     "ReadStatus",
     "ReadinessConflictError",
     "ReadinessIntegrityError",

@@ -8,7 +8,11 @@ import unittest
 
 from yifei_platform.calendar import TradingCalendarV1
 from yifei_platform.market_data import MarketDataReaderV1, MarketDataSourceV1
-from yifei_platform.outcomes import OutcomeCalculatorV1, OutcomeStatus
+from yifei_platform.outcomes import (
+    OutcomeCalculatorV1,
+    OutcomeStatus,
+    PriceLineageGuardV1,
+)
 
 
 class OutcomeCalculatorContractTest(unittest.TestCase):
@@ -60,6 +64,52 @@ class OutcomeCalculatorContractTest(unittest.TestCase):
         self.assertEqual(OutcomeStatus.UNAVAILABLE, result.windows[1].status)
         self.assertIsNone(result.windows[1].return_pct)
 
+    def test_unmatured_window_is_pending_when_cutoff_is_explicit(self) -> None:
+        result = self.calculator.calculate(
+            instrument="000001",
+            observation_session=self.sessions[3],
+            windows=(1, 3),
+            outcome_as_of=self.sessions[4],
+        )
+        self.assertEqual(OutcomeStatus.COMPLETE, result.windows[0].status)
+        self.assertEqual(OutcomeStatus.PENDING, result.windows[1].status)
+        self.assertEqual(("target_session_pending",), result.windows[1].reason_codes)
+
+    def test_price_lineage_guard_rejects_discontinuous_window(self) -> None:
+        guarded = OutcomeCalculatorV1(
+            calendar=TradingCalendarV1(
+                self.sessions, source_version="fixture-calendar.v1"
+            ),
+            market_data=MarketDataReaderV1(
+                MarketDataSourceV1(self.db_path, "fixture-market.v1")
+            ),
+            price_basis_version="raw-close-ohLC.v1",
+            price_lineage_guard=PriceLineageGuardV1(),
+        )
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE stock_daily SET preclose=50 WHERE trade_date=?",
+                (self.sessions[2],),
+            )
+
+        result = guarded.calculate(
+            instrument="000001",
+            observation_session=self.sessions[0],
+            windows=(1, 3),
+            outcome_as_of=self.sessions[5],
+        )
+
+        self.assertEqual(OutcomeStatus.COMPLETE, result.windows[0].status)
+        self.assertEqual(OutcomeStatus.UNAVAILABLE, result.windows[1].status)
+        self.assertEqual(
+            ("corporate_action_or_price_lineage_discontinuity",),
+            result.windows[1].reason_codes,
+        )
+        self.assertEqual(
+            "price-lineage-guard.candidate.v1",
+            result.price_lineage_rule_version,
+        )
+
     def test_missing_entry_or_intermediate_series_is_explicit(self) -> None:
         missing_entry = self.calculator.calculate(
             instrument="999999",
@@ -106,6 +156,12 @@ class OutcomeCalculatorContractTest(unittest.TestCase):
                 """
             )
             rows = []
+            previous_close = None
             for session, (close, high, low) in zip(self.sessions, prices):
-                rows.append(("000001", "测试", session, close, high, low, close, close, 1, 1, 0, 0, 0))
+                rows.append((
+                    "000001", "测试", session, close, high, low, close,
+                    previous_close if previous_close is not None else close,
+                    1, 1, 0, 0, 0,
+                ))
+                previous_close = close
             connection.executemany("INSERT INTO stock_daily VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
