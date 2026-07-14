@@ -9,9 +9,11 @@ import unittest
 from yifei_platform.calendar import TradingCalendarV1
 from yifei_platform.market_data import MarketDataReaderV1, MarketDataSourceV1
 from yifei_platform.outcomes import (
+    OutcomeResultV1,
     OutcomeCalculatorV1,
     OutcomeStatus,
     PriceLineageGuardV1,
+    PriceLineageGuardV2,
 )
 
 
@@ -44,6 +46,15 @@ class OutcomeCalculatorContractTest(unittest.TestCase):
         self.assertEqual(-2.0, result.mae_pct)
         self.assertEqual(-7.6923, result.max_drawdown_pct)
         self.assertEqual(self.sessions[5], result.metric_end_session)
+
+    def test_additive_lineage_sources_preserve_old_positional_schema_argument(self) -> None:
+        result = OutcomeResultV1(
+            "000001", self.sessions[0], 10.0, "raw.v1", (), None,
+            None, None, None, (), None, "outcome-calculator.custom.v1",
+        )
+
+        self.assertEqual("outcome-calculator.custom.v1", result.schema_version)
+        self.assertEqual((), result.price_lineage_sources)
 
     def test_does_not_use_observation_day_high_low_for_post_close_metrics(self) -> None:
         result = self.calculator.calculate(
@@ -110,6 +121,109 @@ class OutcomeCalculatorContractTest(unittest.TestCase):
             result.price_lineage_rule_version,
         )
 
+    def test_v1_preserves_zero_preclose_as_a_discontinuity(self) -> None:
+        guarded = self._guarded(PriceLineageGuardV1())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE stock_daily SET preclose=0 WHERE trade_date=?",
+                (self.sessions[1],),
+            )
+
+        result = guarded.calculate(
+            instrument="000001",
+            observation_session=self.sessions[0],
+            windows=(1,),
+            outcome_as_of=self.sessions[1],
+        )
+
+        self.assertEqual(OutcomeStatus.UNAVAILABLE, result.windows[0].status)
+        self.assertEqual(
+            ("corporate_action_or_price_lineage_discontinuity",),
+            result.windows[0].reason_codes,
+        )
+
+    def test_v2_uses_pct_change_only_when_reported_preclose_is_invalid(self) -> None:
+        guarded = self._guarded(PriceLineageGuardV2())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE stock_daily SET preclose=0, pct_chg=10 WHERE trade_date=?",
+                (self.sessions[1],),
+            )
+
+        result = guarded.calculate(
+            instrument="000001",
+            observation_session=self.sessions[0],
+            windows=(1,),
+            outcome_as_of=self.sessions[1],
+        )
+
+        self.assertEqual(OutcomeStatus.COMPLETE, result.windows[0].status)
+        self.assertEqual(("implied_from_pct_chg",), result.price_lineage_sources)
+        self.assertEqual(
+            "price-lineage-guard.candidate.v2",
+            result.price_lineage_rule_version,
+        )
+
+    def test_v2_rejects_bad_implied_lineage_and_does_not_override_valid_preclose(self) -> None:
+        guard = PriceLineageGuardV2()
+        implied_bad = guard.check(
+            previous_close=100,
+            current_preclose=0,
+            current_close=110,
+            current_pct_chg=5,
+        )
+        reported_bad = guard.check(
+            previous_close=100,
+            current_preclose=50,
+            current_close=110,
+            current_pct_chg=10,
+        )
+
+        self.assertEqual(
+            "corporate_action_or_price_lineage_discontinuity",
+            implied_bad.reason_code,
+        )
+        self.assertEqual("implied_from_pct_chg", implied_bad.reference_source)
+        self.assertEqual(
+            "corporate_action_or_price_lineage_discontinuity",
+            reported_bad.reason_code,
+        )
+        self.assertEqual("reported_preclose", reported_bad.reference_source)
+
+    def test_v2_missing_fallback_inputs_remain_unavailable(self) -> None:
+        check = PriceLineageGuardV2().check(
+            previous_close=100,
+            current_preclose=0,
+            current_close=110,
+            current_pct_chg=None,
+        )
+
+        self.assertEqual("price_lineage_input_missing", check.reason_code)
+        self.assertEqual("unavailable", check.reference_source)
+
+    def test_pending_result_does_not_read_lineage_after_cutoff(self) -> None:
+        guarded = self._guarded(PriceLineageGuardV2())
+        before = guarded.calculate(
+            instrument="000001",
+            observation_session=self.sessions[3],
+            windows=(3,),
+            outcome_as_of=self.sessions[4],
+        )
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE stock_daily SET preclose=0, pct_chg=NULL WHERE trade_date=?",
+                (self.sessions[5],),
+            )
+        after = guarded.calculate(
+            instrument="000001",
+            observation_session=self.sessions[3],
+            windows=(3,),
+            outcome_as_of=self.sessions[4],
+        )
+
+        self.assertEqual(before, after)
+        self.assertEqual(OutcomeStatus.PENDING, after.windows[0].status)
+
     def test_missing_entry_or_intermediate_series_is_explicit(self) -> None:
         missing_entry = self.calculator.calculate(
             instrument="999999",
@@ -134,6 +248,18 @@ class OutcomeCalculatorContractTest(unittest.TestCase):
             self.calculator.calculate(instrument="000001", observation_session="2026-06-07")
         with self.assertRaises(ValueError):
             self.calculator.calculate(instrument="000001", observation_session=self.sessions[0], windows=(0,))
+
+    def _guarded(self, guard):
+        return OutcomeCalculatorV1(
+            calendar=TradingCalendarV1(
+                self.sessions, source_version="fixture-calendar.v1"
+            ),
+            market_data=MarketDataReaderV1(
+                MarketDataSourceV1(self.db_path, "fixture-market.v1")
+            ),
+            price_basis_version="raw-close-ohLC.v1",
+            price_lineage_guard=guard,
+        )
 
     def _seed(self, path: Path) -> None:
         prices = (

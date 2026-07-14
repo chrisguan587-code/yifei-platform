@@ -53,10 +53,12 @@ from .outcomes import (
     OutcomeCalculatorV1,
     OutcomeResultV1,
     OutcomeStatus,
+    PriceLineageCheckV1,
     PriceLineageGuardV1,
+    PriceLineageGuardV2,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "BOOTSTRAP_VERSION",
@@ -88,7 +90,9 @@ __all__ = [
     "OutcomeCalculatorV1",
     "OutcomeResultV1",
     "OutcomeStatus",
+    "PriceLineageCheckV1",
     "PriceLineageGuardV1",
+    "PriceLineageGuardV2",
     "ReadStatus",
     "ReadinessConflictError",
     "ReadinessIntegrityError",

@@ -37,6 +37,13 @@ class OutcomeResultV1:
     reason_codes: tuple[str, ...]
     price_lineage_rule_version: str | None = None
     schema_version: str = "outcome-calculator.v1"
+    price_lineage_sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PriceLineageCheckV1:
+    reason_code: str | None
+    reference_source: str
 
 
 @dataclass(frozen=True)
@@ -53,13 +60,75 @@ class PriceLineageGuardV1:
         *,
         previous_close: float | None,
         current_preclose: float | None,
+        current_close: float | None = None,
+        current_pct_chg: float | None = None,
     ) -> str | None:
+        return self.check(
+            previous_close=previous_close,
+            current_preclose=current_preclose,
+            current_close=current_close,
+            current_pct_chg=current_pct_chg,
+        ).reason_code
+
+    def check(
+        self,
+        *,
+        previous_close: float | None,
+        current_preclose: float | None,
+        current_close: float | None = None,
+        current_pct_chg: float | None = None,
+    ) -> PriceLineageCheckV1:
         if previous_close is None or previous_close <= 0 or current_preclose is None:
-            return "price_lineage_input_missing"
+            return PriceLineageCheckV1("price_lineage_input_missing", "unavailable")
         difference = abs(current_preclose - previous_close) / previous_close
         if difference > self.tolerance_ratio:
-            return "corporate_action_or_price_lineage_discontinuity"
-        return None
+            return PriceLineageCheckV1(
+                "corporate_action_or_price_lineage_discontinuity",
+                "reported_preclose",
+            )
+        return PriceLineageCheckV1(None, "reported_preclose")
+
+
+@dataclass(frozen=True)
+class PriceLineageGuardV2(PriceLineageGuardV1):
+    rule_version: str = "price-lineage-guard.candidate.v2"
+
+    def check(
+        self,
+        *,
+        previous_close: float | None,
+        current_preclose: float | None,
+        current_close: float | None = None,
+        current_pct_chg: float | None = None,
+    ) -> PriceLineageCheckV1:
+        if previous_close is None or previous_close <= 0:
+            return PriceLineageCheckV1("price_lineage_input_missing", "unavailable")
+        if current_preclose is not None and current_preclose > 0:
+            reference = current_preclose
+            source = "reported_preclose"
+        else:
+            denominator = (
+                1 + current_pct_chg / 100
+                if current_pct_chg is not None
+                else None
+            )
+            if (
+                current_close is None
+                or current_close <= 0
+                or denominator is None
+                or denominator <= 0
+            ):
+                return PriceLineageCheckV1(
+                    "price_lineage_input_missing", "unavailable"
+                )
+            reference = current_close / denominator
+            source = "implied_from_pct_chg"
+        difference = abs(reference - previous_close) / previous_close
+        if difference > self.tolerance_ratio:
+            return PriceLineageCheckV1(
+                "corporate_action_or_price_lineage_discontinuity", source
+            )
+        return PriceLineageCheckV1(None, source)
 
 
 class OutcomeCalculatorV1:
@@ -71,7 +140,7 @@ class OutcomeCalculatorV1:
         calendar: TradingCalendarV1,
         market_data: MarketDataReaderV1,
         price_basis_version: str,
-        price_lineage_guard: PriceLineageGuardV1 | None = None,
+        price_lineage_guard: PriceLineageGuardV1 | PriceLineageGuardV2 | None = None,
     ):
         if not price_basis_version.strip():
             raise ValueError("price_basis_version is required")
@@ -129,20 +198,27 @@ class OutcomeCalculatorV1:
         outcomes: list[ForwardOutcomeV1] = []
         target_sessions: dict[int, str] = {}
         lineage_reasons: dict[int, str] = {}
+        lineage_sources: set[str] = set()
         previous_fact = entry_fact
         for offset in range(1, max(normalized_windows) + 1):
             try:
                 session = self._calendar.offset_session(observation_session, offset).isoformat()
             except CalendarRangeError:
                 break
+            if outcome_as_of is not None and session > outcome_as_of:
+                break
             current_fact = fact_for(session)
             if self._price_lineage_guard is not None:
-                reason = self._price_lineage_guard.discontinuity_reason(
+                check = self._price_lineage_guard.check(
                     previous_close=previous_fact.close if previous_fact else None,
                     current_preclose=current_fact.preclose if current_fact else None,
+                    current_close=current_fact.close if current_fact else None,
+                    current_pct_chg=current_fact.pct_chg if current_fact else None,
                 )
-                if reason is not None:
-                    lineage_reasons[offset] = reason
+                if check.reference_source != "unavailable":
+                    lineage_sources.add(check.reference_source)
+                if check.reason_code is not None:
+                    lineage_reasons[offset] = check.reason_code
             previous_fact = current_fact
         for window in normalized_windows:
             try:
@@ -215,10 +291,14 @@ class OutcomeCalculatorV1:
 
         max_window = max(target_sessions, default=None)
         if max_window is None:
-            return self._with_unavailable_metrics(instrument, observation_session, entry_price, outcomes, "metric_window_unpublished")
+            return self._with_unavailable_metrics(
+                instrument, observation_session, entry_price, outcomes,
+                "metric_window_unpublished", lineage_sources,
+            )
         if outcome_as_of is not None and target_sessions[max_window] > outcome_as_of:
             return self._with_unavailable_metrics(
-                instrument, observation_session, entry_price, outcomes, "metric_window_pending"
+                instrument, observation_session, entry_price, outcomes,
+                "metric_window_pending", lineage_sources,
             )
         metric_lineage_reason = next(
             (
@@ -235,6 +315,7 @@ class OutcomeCalculatorV1:
                 entry_price,
                 outcomes,
                 metric_lineage_reason,
+                lineage_sources,
             )
         series: list[StockDailyFactV1] = []
         for offset in range(1, max_window + 1):
@@ -242,7 +323,8 @@ class OutcomeCalculatorV1:
             fact = fact_for(session)
             if fact is None or any(value is None or value <= 0 for value in (fact.high, fact.low, fact.close)):
                 return self._with_unavailable_metrics(
-                    instrument, observation_session, entry_price, outcomes, "metric_series_incomplete"
+                    instrument, observation_session, entry_price, outcomes,
+                    "metric_series_incomplete", lineage_sources,
                 )
             series.append(fact)
 
@@ -266,6 +348,7 @@ class OutcomeCalculatorV1:
             max_drawdown_pct=round(max_drawdown, 4),
             reason_codes=(),
             price_lineage_rule_version=self._lineage_version,
+            price_lineage_sources=tuple(sorted(lineage_sources)),
         )
 
     def _with_unavailable_metrics(
@@ -275,6 +358,7 @@ class OutcomeCalculatorV1:
         entry_price: float,
         outcomes: list[ForwardOutcomeV1],
         reason: str,
+        lineage_sources: set[str],
     ) -> OutcomeResultV1:
         return OutcomeResultV1(
             instrument=instrument,
@@ -288,6 +372,7 @@ class OutcomeCalculatorV1:
             max_drawdown_pct=None,
             reason_codes=(reason,),
             price_lineage_rule_version=self._lineage_version,
+            price_lineage_sources=tuple(sorted(lineage_sources)),
         )
 
     @property
