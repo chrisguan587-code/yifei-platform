@@ -9,12 +9,25 @@ import unittest
 from yifei_platform.calendar import TradingCalendarV1
 from yifei_platform.market_data import MarketDataReaderV1, MarketDataSourceV1
 from yifei_platform.outcomes import (
+    OUTCOME_BATCH_VERSION,
+    OutcomeBatchResultV1,
     OutcomeResultV1,
     OutcomeCalculatorV1,
+    OutcomeRequestV1,
     OutcomeStatus,
     PriceLineageGuardV1,
     PriceLineageGuardV2,
 )
+
+
+class _CountingReader:
+    def __init__(self, reader):
+        self._reader = reader
+        self.calls = []
+
+    def read_stock_daily(self, as_of: str):
+        self.calls.append(as_of)
+        return self._reader.read_stock_daily(as_of)
 
 
 class OutcomeCalculatorContractTest(unittest.TestCase):
@@ -249,6 +262,44 @@ class OutcomeCalculatorContractTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.calculator.calculate(instrument="000001", observation_session=self.sessions[0], windows=(0,))
 
+    def test_batch_is_scalar_equivalent_and_reads_each_session_once(self) -> None:
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE stock_daily SET preclose=0, pct_chg=10 WHERE stock_code=? AND trade_date=?",
+                ("000001", self.sessions[1]),
+            )
+        counting = _CountingReader(MarketDataReaderV1(
+            MarketDataSourceV1(self.db_path, "fixture-market.v1")
+        ))
+        calculator = OutcomeCalculatorV1(
+            calendar=TradingCalendarV1(
+                self.sessions, source_version="fixture-calendar.v1"
+            ),
+            market_data=counting,
+            price_basis_version="raw-close-ohLC.v1",
+            price_lineage_guard=PriceLineageGuardV2(),
+        )
+        requests = (
+            OutcomeRequestV1("000001", self.sessions[0], (1, 3, 5)),
+            OutcomeRequestV1("000002", self.sessions[0], (1, 3, 5)),
+        )
+        scalar = tuple(calculator.calculate(
+            instrument=request.instrument,
+            observation_session=request.observation_session,
+            windows=request.windows,
+            outcome_as_of=self.sessions[4],
+        ) for request in requests)
+        counting.calls.clear()
+
+        batch = calculator.calculate_many(
+            requests=requests, outcome_as_of=self.sessions[4]
+        )
+
+        self.assertIsInstance(batch, OutcomeBatchResultV1)
+        self.assertEqual(OUTCOME_BATCH_VERSION, batch.schema_version)
+        self.assertEqual(scalar, batch.results)
+        self.assertEqual(self.sessions[:5], tuple(counting.calls))
+
     def _guarded(self, guard):
         return OutcomeCalculatorV1(
             calendar=TradingCalendarV1(
@@ -282,12 +333,15 @@ class OutcomeCalculatorContractTest(unittest.TestCase):
                 """
             )
             rows = []
-            previous_close = None
-            for session, (close, high, low) in zip(self.sessions, prices):
-                rows.append((
-                    "000001", "测试", session, close, high, low, close,
-                    previous_close if previous_close is not None else close,
-                    1, 1, 0, 0, 0,
-                ))
-                previous_close = close
+            for code, multiplier in (("000001", 1.0), ("000002", 2.0)):
+                previous_close = None
+                for session, (close, high, low) in zip(self.sessions, prices):
+                    rows.append((
+                        code, "测试", session,
+                        close * multiplier, high * multiplier, low * multiplier,
+                        close * multiplier,
+                        previous_close if previous_close is not None else close * multiplier,
+                        1, 1, 0, 0, 0,
+                    ))
+                    previous_close = close * multiplier
             connection.executemany("INSERT INTO stock_daily VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)

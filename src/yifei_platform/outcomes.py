@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, replace
 from datetime import date
 from enum import Enum
 
 from .calendar import CalendarRangeError, TradingCalendarV1
 from .market_data import MarketDataReaderV1, ReadStatus, StockDailyFactV1
+
+
+OUTCOME_BATCH_VERSION = "outcome-batch.v1"
+_MAX_BATCH_CACHED_SESSIONS = 32
 
 
 class OutcomeStatus(str, Enum):
@@ -38,6 +43,19 @@ class OutcomeResultV1:
     price_lineage_rule_version: str | None = None
     schema_version: str = "outcome-calculator.v1"
     price_lineage_sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class OutcomeRequestV1:
+    instrument: str
+    observation_session: str
+    windows: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class OutcomeBatchResultV1:
+    results: tuple[OutcomeResultV1, ...]
+    schema_version: str = OUTCOME_BATCH_VERSION
 
 
 @dataclass(frozen=True)
@@ -351,6 +369,31 @@ class OutcomeCalculatorV1:
             price_lineage_sources=tuple(sorted(lineage_sources)),
         )
 
+    def calculate_many(
+        self,
+        *,
+        requests: tuple[OutcomeRequestV1, ...],
+        outcome_as_of: str | None = None,
+    ) -> OutcomeBatchResultV1:
+        if outcome_as_of is not None:
+            date.fromisoformat(outcome_as_of)
+        index = _BatchFactIndex(self._market_data)
+        results = []
+        for request in requests:
+            calculator = OutcomeCalculatorV1(
+                calendar=self._calendar,
+                market_data=index.reader_for(request.instrument),
+                price_basis_version=self._price_basis_version,
+                price_lineage_guard=self._price_lineage_guard,
+            )
+            results.append(calculator.calculate(
+                instrument=request.instrument,
+                observation_session=request.observation_session,
+                windows=request.windows,
+                outcome_as_of=outcome_as_of,
+            ))
+        return OutcomeBatchResultV1(tuple(results))
+
     def _with_unavailable_metrics(
         self,
         instrument: str,
@@ -388,3 +431,36 @@ class OutcomeCalculatorV1:
         if result.status is not ReadStatus.OK:
             return None
         return next((fact for fact in result.facts if fact.stock_code == instrument), None)
+
+
+class _BatchFactIndex:
+    def __init__(self, market_data: MarketDataReaderV1):
+        self._market_data = market_data
+        self._sessions = OrderedDict()
+
+    def reader_for(self, instrument: str):
+        return _InstrumentFactReader(self, instrument)
+
+    def read(self, *, instrument: str, session: str):
+        if session not in self._sessions:
+            result = self._market_data.read_stock_daily(session)
+            self._sessions[session] = (
+                result,
+                {fact.stock_code: fact for fact in result.facts},
+            )
+            if len(self._sessions) > _MAX_BATCH_CACHED_SESSIONS:
+                self._sessions.popitem(last=False)
+        else:
+            self._sessions.move_to_end(session)
+        result, facts = self._sessions[session]
+        fact = facts.get(instrument)
+        return replace(result, facts=((fact,) if fact is not None else ()))
+
+
+class _InstrumentFactReader:
+    def __init__(self, index: _BatchFactIndex, instrument: str):
+        self._index = index
+        self._instrument = instrument
+
+    def read_stock_daily(self, as_of: str):
+        return self._index.read(instrument=self._instrument, session=as_of)

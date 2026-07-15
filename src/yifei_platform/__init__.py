@@ -49,8 +49,11 @@ from .readiness import (
     ReadinessStoreV1,
 )
 from .outcomes import (
+    OUTCOME_BATCH_VERSION,
     ForwardOutcomeV1,
+    OutcomeBatchResultV1,
     OutcomeCalculatorV1,
+    OutcomeRequestV1,
     OutcomeResultV1,
     OutcomeStatus,
     PriceLineageCheckV1,
@@ -58,7 +61,7 @@ from .outcomes import (
     PriceLineageGuardV2,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "BOOTSTRAP_VERSION",
@@ -86,8 +89,11 @@ __all__ = [
     "DatasetQualityV1",
     "MarketDataReaderV1",
     "MarketDataSourceV1",
+    "OUTCOME_BATCH_VERSION",
     "ForwardOutcomeV1",
+    "OutcomeBatchResultV1",
     "OutcomeCalculatorV1",
+    "OutcomeRequestV1",
     "OutcomeResultV1",
     "OutcomeStatus",
     "PriceLineageCheckV1",
