@@ -14,9 +14,39 @@ Reads exact historical rows from `ths_board_daily` through a read-only connectio
 
 ## CapitalFactReaderV1
 
-V1 reads sector-level facts from `sector_fund_flow_daily`: raw amount, change, main inflow, breadth counts, and lead-stock fields. Units are passed through unchanged and must be defined by the source version.
+V1 reads sector-level facts from `sector_fund_flow_daily`: raw amount, change,
+main inflow, breadth counts, lead-stock fields, and explicit amount/main-inflow
+units. Units are passed through unchanged and must be defined by the source
+version.
 
 There is no audited public individual-stock capital table in the current database. V1 does not invent one from V3 confirmation, rankings, or candidate outputs.
+
+### Sector flow daily publisher
+
+`levistock.sector_em(sector_type="industry")` is the current-day upstream for
+sector capital facts. It is not a historical backfill API. The publisher
+therefore requires:
+
+- `as_of` equals the Shanghai-local fetch date;
+- fetch time is at or after `15:10 Asia/Shanghai`;
+- `as_of` already exists in the Platform market database;
+- at least 400 unique sector codes;
+- `amount` and `main_inflow` are finite and explicitly normalized as `CNY`;
+- `abs(main_inflow) <= amount`;
+- breadth counts are nonnegative integers.
+
+The upstream `volume` field is copied only into the immutable raw snapshot and
+is marked `unit_not_audited`. It is not written to the normalized fact table
+and must not be interpreted as shares or lots.
+
+Each current-day response is stored as an immutable raw snapshot before atomic
+fact publication. Repeating identical content is idempotent. Different content
+for an already snapshotted or published date is a conflict and cannot overwrite
+the existing fact.
+
+V3 `sector_fund_flow/{date}` files are a cache layer, not an independent source.
+`get_sector_hot_plates()` contains hotspot and limit-up semantics and remains
+outside this neutral fact contract.
 
 ## Deferred Membership Contract
 

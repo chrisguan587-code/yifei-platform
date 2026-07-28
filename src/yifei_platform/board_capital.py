@@ -33,6 +33,8 @@ class SectorCapitalFactV1:
     down_count: int | None
     lead_stock_name: str | None
     lead_stock_chg: float | None
+    amount_unit: str | None = None
+    main_inflow_unit: str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,7 @@ class CapitalFactReaderV1:
         fields = (
             "sector_code", "sector_name", "trade_date", "amount", "change_pct", "main_inflow",
             "up_count", "down_count", "lead_stock_name", "lead_stock_chg",
+            "amount_unit", "main_inflow_unit",
         )
         return self._reader.read(
             table="sector_fund_flow_daily",
@@ -100,6 +103,8 @@ class CapitalFactReaderV1:
                 change_pct=_float(row["change_pct"]), main_inflow=_float(row["main_inflow"]),
                 up_count=_int(row["up_count"]), down_count=_int(row["down_count"]),
                 lead_stock_name=_string(row["lead_stock_name"]), lead_stock_chg=_float(row["lead_stock_chg"]),
+                amount_unit=_string(row["amount_unit"]),
+                main_inflow_unit=_string(row["main_inflow_unit"]),
             ),
             order_by="sector_code",
         )
