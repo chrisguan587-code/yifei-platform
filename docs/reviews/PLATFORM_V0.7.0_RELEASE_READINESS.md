@@ -2,7 +2,7 @@
 
 > Review date: 2026-07-29
 >
-> Decision: `candidate_committed_final_sha_review_blocked_external`
+> Decision: `release_ready_for_tag_no_production_cutover`
 >
 > Production turnover publisher: `not_enabled`
 
@@ -158,17 +158,15 @@ coverage; temporal lineage; and concurrent fallback recovery. The resulting
 code candidate is commit `cad341e`; its release gate passed 118 tests from both
 the source tree and built sdist.
 
-The final full-range review could not start because the configured OCR provider
-returned `403 Forbidden`. Sessions
-`d4b6f137-713b-496f-a49e-9e49486c9385` and
-`ca1ef6ce-14a0-4474-bb95-f91fd6fc84e1` each failed all 19 review tasks before
-producing any code-review result. This is an external review-infrastructure
-blocker, not approval and not a code finding.
+After provider access recovered, session
+`ef67e0f1-5018-45b1-8009-3b76277070d9` completed the full 19-file review of
+`v0.6.0..17a80ad`. Its actionable high findings were fixed in `d36bd67`.
+Focused final review session `c909ee69-daf2-46ad-8065-0dd7a83952a2` completed
+all six changed files with zero comments.
 
-The product quality standard still requires a complete Open Code Review against
-the immutable final code SHA after provider access is restored. Until that
-review passes, this document does not approve a tag, consumer pin update,
-push/merge, or production LaunchAgent change.
+The code candidate is therefore ready for an immutable tag. This document does
+not itself authorize a consumer pin update, push/merge, or production
+LaunchAgent change.
 
 ## Operational cutover and rollback
 
