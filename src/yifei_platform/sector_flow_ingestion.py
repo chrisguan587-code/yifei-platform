@@ -61,17 +61,26 @@ def publish_sector_flow_daily_v1(
     fetched_at: str,
     source_version: str = SECTOR_FLOW_SOURCE_VERSION,
     minimum_sector_count: int = 400,
+    observed_now: datetime | None = None,
 ) -> SectorFlowPublishResultV1:
     requested = date.fromisoformat(as_of).isoformat()
     observed = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
     if observed.utcoffset() is None:
         raise ValueError("fetched_at must include a timezone")
     local_observed = observed.astimezone(ZoneInfo("Asia/Shanghai"))
-    if local_observed.date().isoformat() != requested:
+    actual_observed = observed_now or datetime.now(
+        ZoneInfo("Asia/Shanghai")
+    )
+    if actual_observed.utcoffset() is None:
+        raise ValueError("observed_now must include a timezone")
+    actual_local = actual_observed.astimezone(ZoneInfo("Asia/Shanghai"))
+    if actual_local.date().isoformat() != requested:
         raise ValueError(
             "sector_em is current-day only; as_of must equal Shanghai fetch date"
         )
-    if local_observed.time() < time(15, 10):
+    if local_observed > actual_local:
+        raise ValueError("fetched_at cannot be in the future")
+    if actual_local.time() < time(15, 10):
         raise ValueError("sector flow may publish only after 15:10 Asia/Shanghai")
     if not source_version.strip():
         raise ValueError("source_version is required")

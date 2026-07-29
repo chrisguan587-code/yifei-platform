@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from pathlib import Path
 import sqlite3
@@ -101,6 +102,9 @@ class SectorFlowIngestionTest(unittest.TestCase):
                 as_of="2026-07-26",
                 fetched_at="2026-07-27T15:20:00+08:00",
                 minimum_sector_count=2,
+                observed_now=datetime.fromisoformat(
+                    "2026-07-27T15:20:00+08:00"
+                ),
             )
 
     def test_reader_blocks_when_monetary_unit_columns_are_missing(self) -> None:
@@ -135,6 +139,9 @@ class SectorFlowIngestionTest(unittest.TestCase):
                 as_of="2026-07-27",
                 fetched_at="2026-07-27T14:59:00+08:00",
                 minimum_sector_count=2,
+                observed_now=datetime.fromisoformat(
+                    "2026-07-27T14:59:00+08:00"
+                ),
             )
 
     def _publish(self, client, *, minimum: int = 2):
@@ -146,6 +153,9 @@ class SectorFlowIngestionTest(unittest.TestCase):
             as_of="2026-07-27",
             fetched_at="2026-07-27T15:20:00+08:00",
             minimum_sector_count=minimum,
+            observed_now=datetime.fromisoformat(
+                "2026-07-27T15:20:00+08:00"
+            ),
         )
 
 

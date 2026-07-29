@@ -676,10 +676,9 @@ def _apply_turnover_snapshot(
                 f"turnover coverage {coverage:.6%} is below "
                 f"{TURNOVER_COVERAGE_MINIMUM:.2%}"
             )
-        connection.executemany(
-            """UPDATE stock_daily SET turnover=NULL
-               WHERE stock_code=? AND trade_date=?""",
-            [(code, as_of) for code in eligible],
+        connection.execute(
+            "UPDATE stock_daily SET turnover=NULL WHERE trade_date=?",
+            (as_of,),
         )
         connection.executemany(
             """UPDATE stock_daily SET turnover=?

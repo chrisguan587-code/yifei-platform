@@ -39,6 +39,10 @@ def build_baostock_turnover_snapshot_v1(
     timestamp = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
     if timestamp.utcoffset() is None:
         raise ValueError("fetched_at must include a timezone")
+    if requested > timestamp.date().isoformat():
+        raise ValueError(
+            "turnover snapshot as_of cannot be after fetched_at"
+        )
     source_rows = _source_rows(market_database_path, requested)
     eligible = tuple(
         row
@@ -117,6 +121,25 @@ def validate_baostock_turnover_snapshot_market_v1(
     payload: dict[str, object],
 ) -> None:
     requested = date.fromisoformat(str(payload.get("as_of"))).isoformat()
+    if payload.get("schema_version") != BAOSTOCK_TURNOVER_SCHEMA_VERSION:
+        raise ValueError("existing turnover snapshot schema mismatch")
+    if payload.get("source") != "baostock.daily":
+        raise ValueError("existing turnover snapshot source mismatch")
+    if payload.get("source_version") != BAOSTOCK_TURNOVER_SOURCE_VERSION:
+        raise ValueError(
+            "existing turnover snapshot source version mismatch"
+        )
+    fetched_at = datetime.fromisoformat(
+        str(payload.get("fetched_at") or "").replace("Z", "+00:00")
+    )
+    if fetched_at.utcoffset() is None:
+        raise ValueError(
+            "existing turnover snapshot fetched_at must include a timezone"
+        )
+    if requested > fetched_at.date().isoformat():
+        raise ValueError(
+            "existing turnover snapshot as_of cannot be after fetched_at"
+        )
     if payload.get("units") != {
         "volume": "SHARE",
         "amount": "CNY",
@@ -274,6 +297,10 @@ def build_derived_turnover_snapshot_v1(
     timestamp = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
     if timestamp.utcoffset() is None:
         raise ValueError("fetched_at must include a timezone")
+    if requested > timestamp.date().isoformat():
+        raise ValueError(
+            "turnover snapshot as_of cannot be after fetched_at"
+        )
     if reference.get("schema_version") != FLOAT_SHARE_REFERENCE_SCHEMA_VERSION:
         raise ValueError("float-share reference schema mismatch")
     if reference.get("source") != "baostock.daily":

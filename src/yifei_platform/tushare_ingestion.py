@@ -227,6 +227,51 @@ def backfill_tushare_supplemental_v1(
                        'membership_available_through'
                    )"""
             ))
+            existing_from = existing_metadata.get(
+                "membership_available_from"
+            )
+            existing_through = existing_metadata.get(
+                "membership_available_through"
+            )
+            if existing_from and existing_through:
+                if (
+                    start > (
+                        date.fromisoformat(existing_through)
+                        + timedelta(days=1)
+                    ).isoformat()
+                    or end < (
+                        date.fromisoformat(existing_from)
+                        - timedelta(days=1)
+                    ).isoformat()
+                ):
+                    raise ValueError(
+                        "membership publication window is not contiguous"
+                    )
+            stock_codes = sorted({str(row[0]) for row in membership_rows})
+            if stock_codes:
+                placeholders = ",".join("?" for _ in stock_codes)
+                conflict = connection.execute(
+                    f"""SELECT 1 FROM sector_membership_history
+                        WHERE source<>?
+                          AND stock_code IN ({placeholders})
+                          AND valid_from<=?
+                          AND (
+                              valid_to_exclusive IS NULL
+                              OR valid_to_exclusive>?
+                          )
+                        LIMIT 1""",
+                    (
+                        "tushare.index_member_all",
+                        *stock_codes,
+                        end,
+                        start,
+                    ),
+                ).fetchone()
+                if conflict:
+                    raise ValueError(
+                        "cross-source sector membership overlap; "
+                        "publish to a separate target"
+                    )
             membership_available_from = min(
                 start,
                 existing_metadata.get("membership_available_from", start),
