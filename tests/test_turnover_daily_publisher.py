@@ -251,6 +251,60 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
                 created_at="2026-07-28T17:30:00+08:00",
             )
 
+    def test_derived_snapshot_rejects_reference_created_after_fetch(
+        self,
+    ) -> None:
+        reference = build_float_share_reference_v1(
+            market_database_path=self.source,
+            capital_database_path=self.capital,
+            as_of="2026-07-27",
+            created_at="2026-07-28T17:30:00+08:00",
+        )
+        with self.assertRaisesRegex(ValueError, "cannot be after fetched_at"):
+            build_derived_turnover_snapshot_v1(
+                market_database_path=self.source,
+                as_of="2026-07-28",
+                fetched_at="2026-07-28T17:29:59+08:00",
+                reference=reference,
+            )
+
+    def test_existing_derived_snapshot_rejects_changed_market_database(
+        self,
+    ) -> None:
+        reference = build_float_share_reference_v1(
+            market_database_path=self.source,
+            capital_database_path=self.capital,
+            as_of="2026-07-27",
+            created_at="2026-07-28T17:30:00+08:00",
+        )
+        payload = build_derived_turnover_snapshot_v1(
+            market_database_path=self.source,
+            as_of="2026-07-28",
+            fetched_at="2026-07-28T17:40:00+08:00",
+            reference=reference,
+        )
+        write_turnover_snapshot_v1(payload=payload, output=self.snapshot)
+        reference_path = self.root / "reference.json"
+        reference_path.write_text(json.dumps(reference), encoding="utf-8")
+        with sqlite3.connect(self.source) as connection:
+            connection.execute(
+                """UPDATE stock_daily SET volume=1500
+                   WHERE stock_code='000001' AND trade_date='2026-07-28'"""
+            )
+        with (
+            patch.object(sys, "argv", [
+                "turnover",
+                "--market-db", str(self.source),
+                "--as-of", "2026-07-28",
+                "--fetched-at", "2026-07-28T18:00:00+08:00",
+                "--float-share-reference", str(reference_path),
+                "--output", str(self.snapshot),
+            ]),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            turnover_cli_main()
+        self.assertEqual(2, raised.exception.code)
+
     def test_rejects_float_share_reference_older_than_twenty_sessions(self) -> None:
         with sqlite3.connect(self.source) as connection:
             connection.executemany(

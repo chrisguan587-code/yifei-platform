@@ -119,14 +119,20 @@ def publish_sector_flow_daily_v1(
         rows=rows,
         as_of=requested,
     )
-    _publish_rows(
-        target_path=target_path,
-        rows=rows,
-        as_of=requested,
-        fetched_at=fetched_at,
-        source_version=source_version,
-    )
-    _publish_immutable_json(snapshot_path, snapshot)
+    _preflight_immutable_json(snapshot_path, snapshot)
+    snapshot_created = _publish_immutable_json(snapshot_path, snapshot)
+    try:
+        _publish_rows(
+            target_path=target_path,
+            rows=rows,
+            as_of=requested,
+            fetched_at=fetched_at,
+            source_version=source_version,
+        )
+    except BaseException:
+        if snapshot_created:
+            snapshot_path.unlink(missing_ok=True)
+        raise
     return SectorFlowPublishResultV1(
         target_path=target_path.resolve(),
         raw_snapshot_path=snapshot_path,
@@ -301,21 +307,37 @@ def _require_market_session(database_path: Path, as_of: str) -> None:
         raise ValueError("as_of is not a published market session")
 
 
-def _publish_immutable_json(path: Path, payload: dict[str, object]) -> None:
-    encoded = json.dumps(
+def _encoded_snapshot(payload: dict[str, object]) -> str:
+    return json.dumps(
         payload,
         allow_nan=False,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _preflight_immutable_json(
+    path: Path, payload: dict[str, object],
+) -> None:
+    encoded = _encoded_snapshot(payload)
+    if path.exists() and path.read_text(encoding="utf-8") != encoded:
+        raise ValueError(
+            "raw sector-flow snapshot already exists with different content"
+        )
+
+
+def _publish_immutable_json(
+    path: Path, payload: dict[str, object],
+) -> bool:
+    encoded = _encoded_snapshot(payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         if path.read_text(encoding="utf-8") != encoded:
             raise ValueError(
                 "raw sector-flow snapshot already exists with different content"
             )
-        return
+        return False
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
@@ -330,6 +352,8 @@ def _publish_immutable_json(path: Path, payload: dict[str, object]) -> None:
                 raise ValueError(
                     "raw sector-flow snapshot publish conflict"
                 )
+            return False
+        return True
     finally:
         temporary.unlink(missing_ok=True)
 

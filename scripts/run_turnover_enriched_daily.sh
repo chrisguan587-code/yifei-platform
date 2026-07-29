@@ -20,12 +20,43 @@ if [ ! -f "$HEALTH_ARTIFACT" ]; then
   exit 69
 fi
 FETCHED_AT="$(date -u '+%Y-%m-%dT%H:%M:%S+00:00')"
+SNAPSHOT_CLI="$(dirname "$0")/../.venv/bin/yifei-platform-turnover-snapshot"
+
+validate_existing_snapshot() {
+  source_version="$(
+    "$(dirname "$0")/../.venv/bin/python" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["source_version"])' \
+      "$TURNOVER_SNAPSHOT"
+  )"
+  case "$source_version" in
+    baostock-daily-turnover.v1)
+      "$SNAPSHOT_CLI" \
+        --market-db "$SOURCE_DB" \
+        --as-of "$AS_OF" \
+        --fetched-at "$FETCHED_AT" \
+        --output "$TURNOVER_SNAPSHOT" >/dev/null
+      ;;
+    baostock-float-share-derived-turnover.v1)
+      "$SNAPSHOT_CLI" \
+        --market-db "$SOURCE_DB" \
+        --as-of "$AS_OF" \
+        --fetched-at "$FETCHED_AT" \
+        --float-share-reference "$FLOAT_SHARE_REFERENCE" \
+        --output "$TURNOVER_SNAPSHOT" >/dev/null
+      ;;
+    *)
+      echo "unsupported turnover snapshot source version: $source_version" >&2
+      exit 65
+      ;;
+  esac
+}
 
 if [ -f "$TURNOVER_SNAPSHOT" ]; then
-  echo "reusing immutable turnover snapshot: $TURNOVER_SNAPSHOT"
+  validate_existing_snapshot
+  echo "reusing validated immutable turnover snapshot: $TURNOVER_SNAPSHOT"
 else
   if env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-    "$(dirname "$0")/../.venv/bin/yifei-platform-turnover-snapshot" \
+    "$SNAPSHOT_CLI" \
       --market-db "$SOURCE_DB" \
       --as-of "$AS_OF" \
       --fetched-at "$FETCHED_AT" \
@@ -38,10 +69,11 @@ else
       exit "$status"
     fi
     if [ -f "$TURNOVER_SNAPSHOT" ]; then
-      echo "reusing snapshot created by a concurrent runner"
+      validate_existing_snapshot
+      echo "reusing validated snapshot created by a concurrent runner"
     else
       echo "warning: exact-date BaoStock unavailable; using bounded reference" >&2
-      "$(dirname "$0")/../.venv/bin/yifei-platform-turnover-snapshot" \
+      "$SNAPSHOT_CLI" \
         --market-db "$SOURCE_DB" \
         --as-of "$AS_OF" \
         --fetched-at "$FETCHED_AT" \

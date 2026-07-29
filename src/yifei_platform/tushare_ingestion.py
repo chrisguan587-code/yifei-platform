@@ -187,6 +187,21 @@ def backfill_tushare_supplemental_v1(
         initialize_supplemental_database_v1(temporary)
         with sqlite3.connect(temporary) as connection:
             connection.execute("BEGIN")
+            existing_metadata = dict(connection.execute(
+                """SELECT key,value FROM supplemental_metadata
+                   WHERE key IN (
+                       'membership_available_from',
+                       'membership_available_through'
+                   )"""
+            ))
+            membership_available_from = min(
+                start,
+                existing_metadata.get("membership_available_from", start),
+            )
+            membership_available_through = max(
+                end,
+                existing_metadata.get("membership_available_through", end),
+            )
             connection.execute(
                 """DELETE FROM stock_capital_daily
                    WHERE trade_date BETWEEN ? AND ? AND source=?""",
@@ -242,8 +257,14 @@ def backfill_tushare_supplemental_v1(
                     ("capital_fetched_at", fetched_at),
                     ("membership_source_version", source_version),
                     ("membership_fetched_at", fetched_at),
-                    ("membership_available_from", start),
-                    ("membership_available_through", end),
+                    (
+                        "membership_available_from",
+                        membership_available_from,
+                    ),
+                    (
+                        "membership_available_through",
+                        membership_available_through,
+                    ),
                 ),
             )
             connection.commit()
@@ -263,7 +284,7 @@ def backfill_tushare_supplemental_v1(
         start_date=start,
         end_date=end,
         latest_capital_as_of=sessions[-1],
-        membership_available_through=end,
+        membership_available_through=membership_available_through,
         capital_coverage=capital_coverage,
         membership_coverage=membership_coverage,
         source_version=source_version,
@@ -418,6 +439,8 @@ def _subtract_membership_window(
 def _validate_membership_intervals(
     memberships: list[tuple[object, ...]],
 ) -> None:
+    # Frozen v1 readers require exactly one active L2 membership per stock.
+    # Concurrent L2 intervals are ambiguous facts and must fail closed.
     by_stock: dict[str, list[tuple[str, str | None, str]]] = {}
     for row in memberships:
         by_stock.setdefault(str(row[0]), []).append(

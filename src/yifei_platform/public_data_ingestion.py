@@ -764,8 +764,9 @@ def backfill_public_capital_v1(
         with sqlite3.connect(temporary) as connection:
             connection.execute("BEGIN")
             connection.execute(
-                "DELETE FROM stock_capital_daily WHERE trade_date BETWEEN ? AND ?",
-                (start, end),
+                """DELETE FROM stock_capital_daily
+                   WHERE trade_date BETWEEN ? AND ? AND source=?""",
+                (start, end, capital_source),
             )
             connection.executemany(
                 """INSERT INTO stock_capital_daily (
@@ -922,7 +923,8 @@ def backfill_cninfo_membership_v1(
         with sqlite3.connect(temporary) as connection:
             connection.execute("BEGIN")
             connection.execute(
-                "DELETE FROM sector_membership_history",
+                "DELETE FROM sector_membership_history WHERE source=?",
+                (MEMBERSHIP_SOURCE,),
             )
             connection.executemany(
                 """INSERT INTO sector_membership_history (

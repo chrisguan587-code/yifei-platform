@@ -58,6 +58,16 @@ def main() -> int:
                 parser.error(
                     "existing turnover snapshot reference mismatch"
                 )
+            expected_payload = build_derived_turnover_snapshot_v1(
+                market_database_path=args.market_db,
+                as_of=args.as_of,
+                fetched_at=str(payload.get("fetched_at") or ""),
+                reference=reference,
+            )
+            if payload != expected_payload:
+                parser.error(
+                    "existing turnover snapshot market-db mismatch"
+                )
         reused = True
     else:
         if args.float_share_reference:

@@ -281,6 +281,17 @@ class SupplementalFactsContractTest(unittest.TestCase):
                     ReadStatus.OK,
                     reader.read_as_of(session).status,
                 )
+        with sqlite3.connect(target) as connection:
+            metadata = dict(connection.execute(
+                """SELECT key,value FROM supplemental_metadata
+                   WHERE key LIKE 'membership_available_%'"""
+            ))
+        self.assertEqual(
+            "2026-07-08", metadata["membership_available_from"]
+        )
+        self.assertEqual(
+            "2026-07-10", metadata["membership_available_through"]
+        )
 
     def test_tushare_backfill_preserves_rows_owned_by_other_sources(
         self,
@@ -460,6 +471,17 @@ class SupplementalFactsContractTest(unittest.TestCase):
                 ],
             )
         self._seed_supplemental(target)
+        with sqlite3.connect(target) as connection:
+            connection.execute("DELETE FROM stock_capital_daily")
+            connection.execute(
+                """INSERT INTO stock_capital_daily VALUES
+                   (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "999999", None, "2026-07-09", 1, 2, "CNY", "CNY",
+                    "another.provider", "another.v1",
+                    "2026-07-27T10:00:00+08:00",
+                ),
+            )
         result = backfill_public_capital_v1(
             capital_client=_FakePublicCapitalClient(),
             daily_client=_FakeBaoStockClient(),
@@ -472,9 +494,12 @@ class SupplementalFactsContractTest(unittest.TestCase):
         self.assertEqual(1.0, result.coverage)
         self.assertEqual(
             3,
-            len(StockCapitalFactReaderV1(target).read_daily(
-                "2026-07-09"
-            ).facts),
+            len([
+                fact for fact in StockCapitalFactReaderV1(target).read_daily(
+                    "2026-07-09"
+                ).facts
+                if fact.source != "another.provider"
+            ]),
         )
         self.assertEqual(
             ReadStatus.OK,
@@ -482,6 +507,12 @@ class SupplementalFactsContractTest(unittest.TestCase):
                 "2026-07-09"
             ).status,
         )
+        with sqlite3.connect(target) as connection:
+            preserved = connection.execute(
+                """SELECT source FROM stock_capital_daily
+                   WHERE stock_code='999999'"""
+            ).fetchone()
+        self.assertEqual(("another.provider",), preserved)
 
     def test_sina_payload_uses_r0_as_main_flow_and_preserves_total_flow(self) -> None:
         rows = parse_sina_capital_payload_v1([{
@@ -699,13 +730,25 @@ class SupplementalFactsContractTest(unittest.TestCase):
         self.assertEqual(3, result.stock_count)
         self.assertEqual(1.0, result.coverage)
         membership = SectorMembershipReaderV1(target).read_as_of("2026-07-09")
-        self.assertEqual(ReadStatus.OK, membership.status)
-        self.assertEqual(3, len(membership.facts))
+        self.assertEqual(ReadStatus.BLOCKED, membership.status)
+        self.assertTrue(any(
+            reason.startswith("ambiguous_membership:")
+            for reason in membership.reason_codes
+        ))
         with sqlite3.connect(target) as connection:
             after = connection.execute(
                 "SELECT * FROM stock_capital_daily"
             ).fetchall()
+            membership_sources = {
+                row[0] for row in connection.execute(
+                    "SELECT DISTINCT source FROM sector_membership_history"
+                )
+            }
         self.assertEqual(before, after)
+        self.assertEqual(
+            {"tushare.index_member_all", "akshare.cninfo"},
+            membership_sources,
+        )
 
     def test_cninfo_empty_records_are_cached_as_empty_after_retries(self) -> None:
         class EmptyCninfo:

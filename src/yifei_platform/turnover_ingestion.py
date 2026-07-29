@@ -201,6 +201,10 @@ def build_derived_turnover_snapshot_v1(
         raise ValueError(
             "float-share reference created_at must include a timezone"
         )
+    if created_at > timestamp:
+        raise ValueError(
+            "float-share reference created_at cannot be after fetched_at"
+        )
     reference_rows = reference.get("rows")
     if not isinstance(reference_rows, list):
         raise ValueError("float-share reference rows are missing")
