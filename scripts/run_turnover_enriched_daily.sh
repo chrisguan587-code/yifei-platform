@@ -12,7 +12,7 @@ TURNOVER_ROOT="$3"
 FLOAT_SHARE_REFERENCE="$4"
 TARGET_DB="$5"
 READINESS_ROOT="$6"
-AS_OF="$(date +%F)"
+AS_OF="${AS_OF:-$(TZ=Asia/Shanghai date +%F)}"
 HEALTH_ARTIFACT="$SOURCE_HEALTH_ROOT/$AS_OF.json"
 TURNOVER_SNAPSHOT="$TURNOVER_ROOT/$AS_OF.json"
 if [ ! -f "$HEALTH_ARTIFACT" ]; then
@@ -34,6 +34,7 @@ validate_existing_snapshot() {
         --market-db "$SOURCE_DB" \
         --as-of "$AS_OF" \
         --fetched-at "$FETCHED_AT" \
+        --validate-existing-only \
         --output "$TURNOVER_SNAPSHOT" >/dev/null
       ;;
     baostock-float-share-derived-turnover.v1)
@@ -42,6 +43,7 @@ validate_existing_snapshot() {
         --as-of "$AS_OF" \
         --fetched-at "$FETCHED_AT" \
         --float-share-reference "$FLOAT_SHARE_REFERENCE" \
+        --validate-existing-only \
         --output "$TURNOVER_SNAPSHOT" >/dev/null
       ;;
     *)
@@ -56,6 +58,7 @@ if [ -f "$TURNOVER_SNAPSHOT" ]; then
   echo "reusing validated immutable turnover snapshot: $TURNOVER_SNAPSHOT"
 else
   if env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+    -u http_proxy -u https_proxy -u all_proxy \
     "$SNAPSHOT_CLI" \
       --market-db "$SOURCE_DB" \
       --as-of "$AS_OF" \
@@ -72,7 +75,9 @@ else
       exit "$status"
     else
       echo "warning: exact-date BaoStock unavailable; using bounded reference" >&2
-      if "$SNAPSHOT_CLI" \
+      if env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+        -u http_proxy -u https_proxy -u all_proxy \
+        "$SNAPSHOT_CLI" \
         --market-db "$SOURCE_DB" \
         --as-of "$AS_OF" \
         --fetched-at "$FETCHED_AT" \

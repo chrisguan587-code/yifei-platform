@@ -1017,6 +1017,9 @@ class SupplementalFactsContractTest(unittest.TestCase):
                 "stock_capital_daily": None,
                 "sector_membership_history": None,
             },
+            dataset_gate_coverages={
+                "stock_capital_daily": 1.0,
+            },
         )
         self.assertEqual("ready", marker.status)
         snapshot = json.loads(next(
@@ -1046,7 +1049,28 @@ class SupplementalFactsContractTest(unittest.TestCase):
                         dataset_coverages={
                             "stock_capital_daily": None,
                         },
+                        dataset_gate_coverages={
+                            "stock_capital_daily": 1.0,
+                        },
                     )
+
+    def test_capital_readiness_requires_frozen_coverage_proof(self) -> None:
+        with self.assertRaisesRegex(ValueError, "coverage"):
+            publish_supplemental_readiness_v1(
+                database_path=self.db_path,
+                readiness_root=self.root / "low-capital-coverage",
+                as_of="2026-07-09",
+                published_at="2026-07-27T10:00:00+08:00",
+                source_versions={
+                    "stock_capital_daily": "tushare.2026-07.v1",
+                },
+                dataset_coverages={
+                    "stock_capital_daily": None,
+                },
+                dataset_gate_coverages={
+                    "stock_capital_daily": 0.979,
+                },
+            )
 
     def test_sector_flow_readiness_rechecks_frozen_completeness_floor(
         self,

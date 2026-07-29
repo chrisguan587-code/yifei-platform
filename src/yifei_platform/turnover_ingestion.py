@@ -72,7 +72,21 @@ def build_baostock_turnover_snapshot_v1(
             raise ValueError(
                 f"BaoStock returned duplicate exact-date rows for {stock_code}"
             )
-        rows.append(_normalize_row(stock_code=stock_code, row=matching[0]))
+        normalized = _normalize_row(
+            stock_code=stock_code, row=matching[0]
+        )
+        for field in ("close", "volume", "amount"):
+            if not math.isclose(
+                float(normalized[field]),
+                float(source[field]),
+                rel_tol=1e-9,
+                abs_tol=1e-8,
+            ):
+                raise ValueError(
+                    f"BaoStock {field} does not match market database "
+                    f"for {stock_code}"
+                )
+        rows.append(normalized)
     coverage = len(rows) / len(eligible) if eligible else 0.0
     _require_coverage(coverage)
     return {
@@ -168,6 +182,10 @@ def build_float_share_reference_v1(
     timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
     if timestamp.utcoffset() is None:
         raise ValueError("created_at must include a timezone")
+    if requested > timestamp.date().isoformat():
+        raise ValueError(
+            "float-share reference as_of cannot be after created_at"
+        )
     market_uri = f"{market_database_path.resolve(strict=True).as_uri()}?mode=ro"
     capital_uri = f"{capital_database_path.resolve(strict=True).as_uri()}?mode=ro"
     with sqlite3.connect(market_uri, uri=True) as market:

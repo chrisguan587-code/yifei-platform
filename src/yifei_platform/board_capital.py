@@ -155,7 +155,10 @@ class _FactTableReader:
                     name
                     for row in rows
                     for name in required
-                    if row[name] is None
+                    if row[name] is None or (
+                        isinstance(row[name], str)
+                        and not row[name].strip()
+                    )
                 })
                 if null_required:
                     return self._result(

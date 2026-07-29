@@ -27,8 +27,11 @@ def main() -> int:
     parser.add_argument("--as-of", required=True)
     parser.add_argument("--fetched-at", required=True)
     parser.add_argument("--float-share-reference", type=Path)
+    parser.add_argument("--validate-existing-only", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.validate_existing_only and not args.output.exists():
+        parser.error("--validate-existing-only requires an existing output")
     if args.output.exists():
         payload = json.loads(args.output.read_text(encoding="utf-8"))
         expected_source_version = (

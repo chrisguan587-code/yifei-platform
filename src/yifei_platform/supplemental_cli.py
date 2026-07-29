@@ -222,6 +222,9 @@ def main() -> int:
                     "stock_capital_daily": None,
                     "sector_membership_history": None,
                 },
+                dataset_gate_coverages={
+                    "stock_capital_daily": result.capital_coverage,
+                },
                 bundle="v4-research-capital-sector",
             )
             payload["readiness_marker_id"] = marker.marker_id
@@ -273,6 +276,9 @@ def main() -> int:
                 dataset_coverages={
                     "stock_capital_daily": None,
                     "sector_membership_history": None,
+                },
+                dataset_gate_coverages={
+                    "stock_capital_daily": result.capital_coverage,
                 },
                 bundle="v4-research-capital-sector",
             )
@@ -345,6 +351,9 @@ def main() -> int:
                 dataset_coverages={
                     "stock_capital_daily": None,
                 },
+                dataset_gate_coverages={
+                    "stock_capital_daily": result.coverage,
+                },
                 bundle="v4-research-stock-capital",
             )
             payload["readiness_marker_id"] = marker.marker_id
@@ -416,6 +425,9 @@ def main() -> int:
                 },
                 dataset_coverages={
                     "stock_capital_daily": None,
+                },
+                dataset_gate_coverages={
+                    "stock_capital_daily": result.coverage,
                 },
                 bundle="v4-research-stock-capital",
             )

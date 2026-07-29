@@ -21,7 +21,6 @@ from .supplemental_facts import (
 SECTOR_FLOW_SOURCE_VERSION = "levistock.eastmoney-sector-em.industry.v1"
 SECTOR_FLOW_SOURCE = "levistock.sector_em"
 SECTOR_FLOW_SCHEMA_VERSION = "sector-capital-daily-facts.v1"
-SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class SectorFlowClientV1(Protocol):
@@ -67,7 +66,7 @@ def publish_sector_flow_daily_v1(
     observed = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
     if observed.utcoffset() is None:
         raise ValueError("fetched_at must include a timezone")
-    local_observed = observed.astimezone(SHANGHAI_TZ)
+    local_observed = observed.astimezone(ZoneInfo("Asia/Shanghai"))
     if local_observed.date().isoformat() != requested:
         raise ValueError(
             "sector_em is current-day only; as_of must equal Shanghai fetch date"

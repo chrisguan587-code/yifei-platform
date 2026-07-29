@@ -529,6 +529,7 @@ def publish_supplemental_readiness_v1(
     published_at: str,
     source_versions: dict[str, str],
     dataset_coverages: dict[str, float | None],
+    dataset_gate_coverages: dict[str, float] | None = None,
     bundle: str = "v4-research-supplemental",
 ) -> ReadinessMarkerV1:
     requested = date.fromisoformat(as_of).isoformat()
@@ -538,6 +539,14 @@ def publish_supplemental_readiness_v1(
         raise ValueError(
             "dataset_coverages must match source_versions"
         )
+    gate_coverages = dataset_gate_coverages or {}
+    if "stock_capital_daily" in source_versions:
+        capital_coverage = gate_coverages.get("stock_capital_daily")
+        if capital_coverage is None or capital_coverage < 0.98:
+            raise ValueError(
+                "stock capital readiness coverage is below "
+                "the frozen threshold"
+            )
     with closing(_read_only(database_path.resolve(strict=True))) as connection:
         for dataset, source_version in source_versions.items():
             _require_ready_dataset(
