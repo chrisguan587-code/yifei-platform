@@ -14,6 +14,7 @@ from .turnover_ingestion import (
     build_derived_turnover_snapshot_v1,
     build_baostock_turnover_snapshot_v1,
     float_share_reference_identity_v1,
+    validate_baostock_turnover_snapshot_market_v1,
     write_turnover_snapshot_v1,
 )
 
@@ -68,6 +69,14 @@ def main() -> int:
                 parser.error(
                     "existing turnover snapshot market-db mismatch"
                 )
+        else:
+            try:
+                validate_baostock_turnover_snapshot_market_v1(
+                    market_database_path=args.market_db,
+                    payload=payload,
+                )
+            except ValueError as exc:
+                parser.error(str(exc))
         reused = True
     else:
         if args.float_share_reference:

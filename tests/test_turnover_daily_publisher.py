@@ -62,7 +62,8 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
                     ('capital_turnover_raw_unit','PERCENT'),
                     ('capital_volume_raw_unit','SHARE'),
                     ('capital_source','sina.moneyflow.r0+baostock'),
-                    ('capital_source_version','sina-moneyflow-r0+baostock-daily.v2');
+                    ('capital_source_version','sina-moneyflow-r0+baostock-daily.v2'),
+                    ('capital_fetched_at','2026-07-28T17:00:00+08:00');
                 INSERT INTO stock_capital_daily VALUES
                     ('000001','2026-07-27',100000000),
                     ('600000','2026-07-27',200000000);
@@ -167,6 +168,28 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
             turnover_cli_main()
         self.assertEqual(2, raised.exception.code)
 
+    def test_existing_exact_snapshot_rejects_changed_market_database(
+        self,
+    ) -> None:
+        self._write_snapshot(_FakeBaoStockClient())
+        with sqlite3.connect(self.source) as connection:
+            connection.execute(
+                """UPDATE stock_daily SET amount=41000
+                   WHERE stock_code='600000' AND trade_date='2026-07-28'"""
+            )
+        with (
+            patch.object(sys, "argv", [
+                "turnover",
+                "--market-db", str(self.source),
+                "--as-of", "2026-07-28",
+                "--fetched-at", "2026-07-28T18:00:00+08:00",
+                "--output", str(self.snapshot),
+            ]),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            turnover_cli_main()
+        self.assertEqual(2, raised.exception.code)
+
     def test_derives_turnover_from_bounded_float_share_reference(self) -> None:
         reference = build_float_share_reference_v1(
             market_database_path=self.source,
@@ -266,6 +289,21 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
                 as_of="2026-07-28",
                 fetched_at="2026-07-28T17:29:59+08:00",
                 reference=reference,
+            )
+
+    def test_reference_rejects_capital_fetched_after_creation(self) -> None:
+        with sqlite3.connect(self.capital) as connection:
+            connection.execute(
+                """UPDATE supplemental_metadata
+                   SET value='2026-07-28T18:00:00+08:00'
+                   WHERE key='capital_fetched_at'"""
+            )
+        with self.assertRaisesRegex(ValueError, "after created_at"):
+            build_float_share_reference_v1(
+                market_database_path=self.source,
+                capital_database_path=self.capital,
+                as_of="2026-07-27",
+                created_at="2026-07-28T17:30:00+08:00",
             )
 
     def test_existing_derived_snapshot_rejects_changed_market_database(
@@ -474,6 +512,33 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
 
         self.assertFalse(self.target.exists())
         self.assertFalse(self.readiness.exists())
+
+    def test_uncovered_turnover_does_not_retain_legacy_value(self) -> None:
+        payload = build_baostock_turnover_snapshot_v1(
+            market_database_path=self.source,
+            as_of="2026-07-28",
+            fetched_at="2026-07-28T17:40:00+08:00",
+            client=_FakeBaoStockClient(),
+        )
+        payload["rows"].pop()
+        payload["summary"] = {
+            "eligible_row_count": 2,
+            "covered_row_count": 1,
+            "missing_row_count": 1,
+            "coverage": 0.5,
+            "missing_stock_codes": ["600000"],
+        }
+        write_turnover_snapshot_v1(payload=payload, output=self.snapshot)
+        with patch(
+            "yifei_platform.bootstrap.TURNOVER_COVERAGE_MINIMUM", 0.5
+        ):
+            self._publish()
+        with sqlite3.connect(self.target) as connection:
+            turnover = connection.execute(
+                """SELECT turnover FROM stock_daily
+                   WHERE stock_code='600000' AND trade_date='2026-07-28'"""
+            ).fetchone()[0]
+        self.assertIsNone(turnover)
 
     def test_low_coverage_is_not_frozen_as_an_immutable_snapshot(self) -> None:
         with self.assertRaisesRegex(ValueError, "coverage"):

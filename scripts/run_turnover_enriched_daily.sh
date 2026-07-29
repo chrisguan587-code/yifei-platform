@@ -64,13 +64,12 @@ else
     :
   else
     status="$?"
-    if [ "$status" -ne 75 ]; then
-      echo "exact-date turnover failed with non-fallback status: $status" >&2
-      exit "$status"
-    fi
     if [ -f "$TURNOVER_SNAPSHOT" ]; then
       validate_existing_snapshot
       echo "reusing validated snapshot created by a concurrent runner"
+    elif [ "$status" -ne 75 ]; then
+      echo "exact-date turnover failed with non-fallback status: $status" >&2
+      exit "$status"
     else
       echo "warning: exact-date BaoStock unavailable; using bounded reference" >&2
       "$SNAPSHOT_CLI" \

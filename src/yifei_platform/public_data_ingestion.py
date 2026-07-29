@@ -565,6 +565,12 @@ def backfill_public_supplemental_v1(
     capital_coverage = len(capital_rows) / expected_capital
     if capital_coverage < minimum_capital_coverage:
         raise ValueError("stock capital coverage is below the frozen threshold")
+    _require_session_capital_coverage(
+        session=sessions[-1],
+        expected_codes=universe[sessions[-1]],
+        capital_rows=capital_rows,
+        minimum=minimum_capital_coverage,
+    )
 
     _validate_membership_intervals(membership_rows)
     membership_coverage = _membership_coverage(
@@ -749,6 +755,12 @@ def backfill_public_capital_v1(
     coverage = len(capital_rows) / expected
     if coverage < minimum_capital_coverage:
         raise ValueError("stock capital coverage is below the frozen threshold")
+    _require_session_capital_coverage(
+        session=sessions[-1],
+        expected_codes=universe[sessions[-1]],
+        capital_rows=capital_rows,
+        minimum=minimum_capital_coverage,
+    )
 
     target = target_path.resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -1284,6 +1296,27 @@ def _market_universe(
         if code not in names or names[code] is None:
             names[code] = _optional_string(stock_name)
     return tuple(sorted(universe)), universe, names
+
+
+def _require_session_capital_coverage(
+    *,
+    session: str,
+    expected_codes: set[str],
+    capital_rows: list[tuple[object, ...]],
+    minimum: float,
+) -> None:
+    observed = {
+        str(row[0]) for row in capital_rows if str(row[2]) == session
+    }
+    coverage = (
+        len(observed & expected_codes) / len(expected_codes)
+        if expected_codes else 0.0
+    )
+    if coverage < minimum:
+        raise ValueError(
+            "stock capital coverage is below the frozen threshold "
+            f"for latest session {session}"
+        )
 
 
 def _public_source_supported(stock_code: str) -> bool:

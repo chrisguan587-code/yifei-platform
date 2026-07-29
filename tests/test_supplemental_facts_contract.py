@@ -698,6 +698,57 @@ class SupplementalFactsContractTest(unittest.TestCase):
             ).status,
         )
 
+    def test_latest_capital_session_must_meet_frozen_coverage(self) -> None:
+        market = self.root / "latest-coverage-market.db"
+        target = self.root / "latest-coverage.db"
+        with sqlite3.connect(market) as connection:
+            connection.execute(
+                "CREATE TABLE stock_daily (stock_code TEXT, trade_date TEXT)"
+            )
+            connection.executemany(
+                "INSERT INTO stock_daily VALUES (?, ?)",
+                [
+                    (code, session)
+                    for session in ("2026-07-09", "2026-07-10")
+                    for code in ("000001", "000002", "000003")
+                ],
+            )
+
+        class FirstDayCapital:
+            def read(self, _stock_code):
+                return ({
+                    "trade_date": "2026-07-09",
+                    "vendor_net_amount": 100_000,
+                    "vendor_net_ratio_percent": 0.1,
+                    "amount_unit": "CNY",
+                },)
+
+        class TwoDayDaily:
+            def read(self, _stock_code, _start_date, _end_date):
+                return tuple({
+                    "trade_date": session,
+                    "close": 10,
+                    "volume": 10_000_000,
+                    "amount": 100_000_000,
+                    "turnover_percent": 5,
+                    "volume_unit": "SHARE",
+                    "amount_unit": "CNY",
+                    "turnover_unit": "PERCENT",
+                } for session in ("2026-07-09", "2026-07-10"))
+
+        with self.assertRaisesRegex(ValueError, "latest session"):
+            backfill_public_capital_v1(
+                capital_client=FirstDayCapital(),
+                daily_client=TwoDayDaily(),
+                market_database_path=market,
+                target_path=target,
+                start_date="2026-07-09",
+                end_date="2026-07-10",
+                fetched_at="2026-07-28T12:00:00+08:00",
+                minimum_capital_coverage=0.5,
+            )
+        self.assertFalse(target.exists())
+
     def test_membership_only_backfill_preserves_existing_capital(self) -> None:
         market = self.root / "membership-market.db"
         target = self.root / "membership-only.db"
@@ -1078,16 +1129,18 @@ class SupplementalFactsContractTest(unittest.TestCase):
 class _FakeTushareClient:
     def query(self, api_name, *, params, fields):
         if api_name == "moneyflow_ths":
+            trade_date = str(params["trade_date"])
             return tuple({
                 "ts_code": f"{code}.SZ",
-                "trade_date": "20260709",
+                "trade_date": trade_date,
                 "name": code,
                 "net_amount": 10.0,
             } for code in ("000001", "000002", "000003"))
         if api_name == "daily_basic":
+            trade_date = str(params["trade_date"])
             return tuple({
                 "ts_code": f"{code}.SZ",
-                "trade_date": "20260709",
+                "trade_date": trade_date,
                 "circ_mv": 1000.0,
             } for code in ("000001", "000002", "000003"))
         if api_name == "index_classify":

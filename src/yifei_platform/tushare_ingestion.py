@@ -154,6 +154,20 @@ def backfill_tushare_supplemental_v1(
     )
     if capital_coverage < minimum_capital_coverage:
         raise ValueError("stock capital coverage is below the frozen threshold")
+    latest_session = sessions[-1]
+    latest_observed = {
+        str(row[0]) for row in capital_rows if str(row[2]) == latest_session
+    }
+    latest_expected = universe[latest_session]
+    latest_coverage = (
+        len(latest_observed & latest_expected) / len(latest_expected)
+        if latest_expected else 0.0
+    )
+    if latest_coverage < minimum_capital_coverage:
+        raise ValueError(
+            "stock capital coverage is below the frozen threshold "
+            f"for latest session {latest_session}"
+        )
 
     membership_rows = _fetch_sw_l2_memberships(
         client=client,

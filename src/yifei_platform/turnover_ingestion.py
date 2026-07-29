@@ -97,6 +97,66 @@ def build_baostock_turnover_snapshot_v1(
     }
 
 
+def validate_baostock_turnover_snapshot_market_v1(
+    *,
+    market_database_path: Path,
+    payload: dict[str, object],
+) -> None:
+    requested = date.fromisoformat(str(payload.get("as_of"))).isoformat()
+    if payload.get("units") != {
+        "volume": "SHARE",
+        "amount": "CNY",
+        "turnover": "PERCENT",
+    }:
+        raise ValueError("existing turnover snapshot unit mismatch")
+    source_rows = _source_rows(market_database_path, requested)
+    eligible = {
+        str(row["stock_code"]): row
+        for row in source_rows
+        if _baostock_supported(str(row["stock_code"]))
+        and _positive(row["volume"])
+        and _positive(row["amount"])
+    }
+    raw_rows = payload.get("rows")
+    if not isinstance(raw_rows, list):
+        raise ValueError("existing turnover snapshot rows are missing")
+    covered: set[str] = set()
+    for raw in raw_rows:
+        if not isinstance(raw, dict):
+            raise ValueError("existing turnover snapshot row must be an object")
+        code = str(raw.get("stock_code") or "")
+        if code in covered:
+            raise ValueError("existing turnover snapshot has duplicate rows")
+        source = eligible.get(code)
+        if source is None or raw.get("trade_date") != requested:
+            raise ValueError("existing turnover snapshot market-db mismatch")
+        for field in ("close", "volume", "amount"):
+            if not math.isclose(
+                float(raw.get(field)),
+                float(source[field]),
+                rel_tol=1e-9,
+                abs_tol=1e-8,
+            ):
+                raise ValueError(
+                    "existing turnover snapshot market-db mismatch"
+                )
+        if not _positive_or_zero(raw.get("turnover_percent")):
+            raise ValueError("existing turnover snapshot turnover is invalid")
+        covered.add(code)
+    missing = sorted(set(eligible) - covered)
+    coverage = len(covered) / len(eligible) if eligible else 0.0
+    summary = payload.get("summary")
+    if not isinstance(summary, dict) or summary != {
+        "eligible_row_count": len(eligible),
+        "covered_row_count": len(covered),
+        "missing_row_count": len(missing),
+        "coverage": coverage,
+        "missing_stock_codes": missing,
+    }:
+        raise ValueError("existing turnover snapshot summary mismatch")
+    _require_coverage(coverage)
+
+
 def build_float_share_reference_v1(
     *,
     market_database_path: Path,
@@ -131,6 +191,17 @@ def build_float_share_reference_v1(
                ORDER BY stock_code""",
             (requested,),
         ).fetchall()
+    capital_fetched_at = datetime.fromisoformat(
+        str(metadata.get("capital_fetched_at") or "").replace("Z", "+00:00")
+    )
+    if capital_fetched_at.utcoffset() is None:
+        raise ValueError(
+            "capital reference fetched_at must include a timezone"
+        )
+    if capital_fetched_at > timestamp:
+        raise ValueError(
+            "capital reference fetched_at cannot be after created_at"
+        )
     expected_metadata = {
         "capital_amount_unit": "CNY",
         "capital_turnover_raw_unit": "PERCENT",
@@ -440,6 +511,14 @@ def _positive(value: object) -> bool:
     except (TypeError, ValueError):
         return False
     return math.isfinite(number) and number > 0
+
+
+def _positive_or_zero(value: object) -> bool:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(number) and number >= 0
 
 
 def _require_coverage(coverage: float) -> None:
