@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from contextlib import closing, contextmanager
-import fcntl
 from functools import wraps
 import os
 from pathlib import Path
@@ -34,6 +33,8 @@ def serialized_supplemental_publication_v1(function):
 
 @contextmanager
 def _supplemental_publication_lock(target_path: Path):
+    import fcntl
+
     target = target_path.resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.parent / f".{target.name}.publish.lock"
@@ -545,6 +546,15 @@ def publish_supplemental_readiness_v1(
         if capital_coverage is None or capital_coverage < 0.98:
             raise ValueError(
                 "stock capital readiness coverage is below "
+                "the frozen threshold"
+            )
+    if "sector_membership_history" in source_versions:
+        membership_coverage = gate_coverages.get(
+            "sector_membership_history"
+        )
+        if membership_coverage is None or membership_coverage < 0.99:
+            raise ValueError(
+                "sector membership readiness coverage is below "
                 "the frozen threshold"
             )
     with closing(_read_only(database_path.resolve(strict=True))) as connection:

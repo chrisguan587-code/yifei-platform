@@ -74,6 +74,10 @@ def publish_sector_flow_daily_v1(
     if actual_observed.utcoffset() is None:
         raise ValueError("observed_now must include a timezone")
     actual_local = actual_observed.astimezone(ZoneInfo("Asia/Shanghai"))
+    if local_observed.date().isoformat() != requested:
+        raise ValueError(
+            "sector_em is current-day only; fetched_at date must equal as_of"
+        )
     if actual_local.date().isoformat() != requested:
         raise ValueError(
             "sector_em is current-day only; as_of must equal Shanghai fetch date"

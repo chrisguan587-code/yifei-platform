@@ -327,6 +327,10 @@ def build_derived_turnover_snapshot_v1(
     if int(reference.get("row_count", -1)) != len(reference_rows):
         raise ValueError("float-share reference row count mismatch")
     reference_date = date.fromisoformat(str(reference.get("as_of"))).isoformat()
+    if reference_date > created_at.date().isoformat():
+        raise ValueError(
+            "float-share reference as_of cannot be after created_at"
+        )
     reference_content_sha256 = _reference_content_sha256(reference)
     age = _session_age(
         market_database_path, reference_date=reference_date, as_of=requested

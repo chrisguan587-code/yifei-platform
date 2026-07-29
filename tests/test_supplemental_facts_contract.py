@@ -1019,6 +1019,7 @@ class SupplementalFactsContractTest(unittest.TestCase):
             },
             dataset_gate_coverages={
                 "stock_capital_daily": 1.0,
+                "sector_membership_history": 1.0,
             },
         )
         self.assertEqual("ready", marker.status)
@@ -1156,6 +1157,11 @@ class SupplementalFactsContractTest(unittest.TestCase):
                         published_at="2026-07-27T15:30:00+08:00",
                         source_versions={dataset: source_version},
                         dataset_coverages={dataset: None},
+                        dataset_gate_coverages=(
+                            {dataset: 1.0}
+                            if dataset == "sector_membership_history"
+                            else None
+                        ),
                     )
 
     def test_capital_source_history_window_is_fail_closed(self) -> None:

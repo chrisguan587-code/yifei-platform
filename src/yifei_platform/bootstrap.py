@@ -577,6 +577,10 @@ def _load_turnover_snapshot(path: Path, as_of: str) -> dict[str, object]:
     )
     if fetched_at.utcoffset() is None:
         raise ValueError("turnover snapshot fetched_at must include a timezone")
+    if as_of > fetched_at.date().isoformat():
+        raise ValueError(
+            "turnover snapshot as_of cannot be after fetched_at"
+        )
     if payload.get("units") != {
         "volume": "SHARE",
         "amount": "CNY",

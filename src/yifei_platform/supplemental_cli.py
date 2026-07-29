@@ -224,6 +224,7 @@ def main() -> int:
                 },
                 dataset_gate_coverages={
                     "stock_capital_daily": result.capital_coverage,
+                    "sector_membership_history": result.membership_coverage,
                 },
                 bundle="v4-research-capital-sector",
             )
@@ -279,6 +280,7 @@ def main() -> int:
                 },
                 dataset_gate_coverages={
                     "stock_capital_daily": result.capital_coverage,
+                    "sector_membership_history": result.membership_coverage,
                 },
                 bundle="v4-research-capital-sector",
             )
@@ -473,6 +475,9 @@ def main() -> int:
                 },
                 dataset_coverages={
                     "sector_membership_history": None,
+                },
+                dataset_gate_coverages={
+                    "sector_membership_history": result.coverage,
                 },
                 bundle="v4-research-sector-membership",
             )
