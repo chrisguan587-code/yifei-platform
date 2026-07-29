@@ -1,8 +1,8 @@
 # Platform v0.7.0 Release Readiness Review
 
-> Review date: 2026-07-28
+> Review date: 2026-07-29
 >
-> Decision: `release_ready_pending_final_sha_independent_review`
+> Decision: `candidate_committed_final_sha_review_blocked_external`
 >
 > Production turnover publisher: `not_enabled`
 
@@ -54,13 +54,13 @@ and Readiness state untouched.
 Final working-tree release gate:
 
 ```text
-source-tree tests: 102 passed
-sdist tests:       102 passed
+source-tree tests: 118 passed
+sdist tests:       118 passed
 wheel build:       passed
 isolated install:  yifei-platform 0.7.0 passed
 ```
 
-The focused turnover suite contains thirteen passing tests covering exact
+The focused turnover suite contains twenty passing tests covering exact
 publication, bounded derivation, BaoStock login retry, lot/share mismatch,
 coverage failure, same-day conflict, stale reference and unverified or
 internally inconsistent reference rejection, concurrent immutable publication,
@@ -150,9 +150,25 @@ The suggested reduction of the sector-flow floor from 400 was rejected using
 source data rather than assumption: V3's actual `sector_em(industry)` history
 contains 487–496 rows in recent complete snapshots and 496 on 2026-07-28.
 
-The product quality standard still requires a second Open Code Review against
-the immutable final commit SHA. Until that review passes, this document does
-not approve a tag, consumer pin update or production LaunchAgent change.
+Five successive full-range reviews against candidate SHAs found and drove
+fixes for: cross-source writer ownership; immutable reference identity;
+readiness completeness and unit gates; fixed vendor history windows; exact and
+derived snapshot reuse; uncovered legacy turnover clearing; latest-session
+coverage; temporal lineage; and concurrent fallback recovery. The resulting
+code candidate is commit `cad341e`; its release gate passed 118 tests from both
+the source tree and built sdist.
+
+The final full-range review could not start because the configured OCR provider
+returned `403 Forbidden`. Sessions
+`d4b6f137-713b-496f-a49e-9e49486c9385` and
+`ca1ef6ce-14a0-4474-bb95-f91fd6fc84e1` each failed all 19 review tasks before
+producing any code-review result. This is an external review-infrastructure
+blocker, not approval and not a code finding.
+
+The product quality standard still requires a complete Open Code Review against
+the immutable final code SHA after provider access is restored. Until that
+review passes, this document does not approve a tag, consumer pin update,
+push/merge, or production LaunchAgent change.
 
 ## Operational cutover and rollback
 
