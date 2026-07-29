@@ -183,6 +183,11 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
 
         self.assertEqual("baostock.float-shares-derived", payload["source"])
         self.assertEqual(1, payload["reference_age_sessions"])
+        self.assertEqual(
+            reference["source_version"],
+            payload["reference_source_version"],
+        )
+        self.assertEqual(64, len(payload["reference_content_sha256"]))
         self.assertEqual(1.0, payload["summary"]["coverage"])
         values = {
             row["stock_code"]: row["turnover_percent"]
@@ -190,6 +195,61 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
         }
         self.assertEqual(0.01, values["000001"])
         self.assertEqual(0.02, values["600000"])
+
+    def test_existing_derived_snapshot_rejects_changed_reference(self) -> None:
+        reference = build_float_share_reference_v1(
+            market_database_path=self.source,
+            capital_database_path=self.capital,
+            as_of="2026-07-27",
+            created_at="2026-07-28T17:30:00+08:00",
+        )
+        payload = build_derived_turnover_snapshot_v1(
+            market_database_path=self.source,
+            as_of="2026-07-28",
+            fetched_at="2026-07-28T17:40:00+08:00",
+            reference=reference,
+        )
+        write_turnover_snapshot_v1(
+            payload=payload,
+            output=self.snapshot,
+        )
+        changed = json.loads(json.dumps(reference))
+        changed["rows"][0]["float_shares"] *= 2
+        reference_path = self.root / "changed-reference.json"
+        reference_path.write_text(
+            json.dumps(changed),
+            encoding="utf-8",
+        )
+        with (
+            patch.object(sys, "argv", [
+                "turnover",
+                "--market-db", str(self.source),
+                "--as-of", "2026-07-28",
+                "--fetched-at", "2026-07-28T17:40:00+08:00",
+                "--float-share-reference", str(reference_path),
+                "--output", str(self.snapshot),
+            ]),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            turnover_cli_main()
+        self.assertEqual(2, raised.exception.code)
+
+    def test_reference_producer_rejects_unconsumable_source_version(
+        self,
+    ) -> None:
+        with sqlite3.connect(self.capital) as connection:
+            connection.execute(
+                """UPDATE supplemental_metadata
+                   SET value='eastmoney-https-moneyflow+baostock-daily.v3'
+                   WHERE key='capital_source_version'"""
+            )
+        with self.assertRaisesRegex(ValueError, "source version mismatch"):
+            build_float_share_reference_v1(
+                market_database_path=self.source,
+                capital_database_path=self.capital,
+                as_of="2026-07-27",
+                created_at="2026-07-28T17:30:00+08:00",
+            )
 
     def test_rejects_float_share_reference_older_than_twenty_sessions(self) -> None:
         with sqlite3.connect(self.source) as connection:

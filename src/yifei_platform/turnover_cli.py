@@ -13,6 +13,7 @@ from .turnover_ingestion import (
     DERIVED_TURNOVER_SOURCE_VERSION,
     build_derived_turnover_snapshot_v1,
     build_baostock_turnover_snapshot_v1,
+    float_share_reference_identity_v1,
     write_turnover_snapshot_v1,
 )
 
@@ -41,6 +42,22 @@ def main() -> int:
             or payload.get("source_version") != expected_source_version
         ):
             parser.error("existing turnover snapshot identity mismatch")
+        if args.float_share_reference:
+            reference = json.loads(
+                args.float_share_reference.read_text(encoding="utf-8")
+            )
+            reference_as_of, reference_source_version, reference_hash = (
+                float_share_reference_identity_v1(reference)
+            )
+            if (
+                payload.get("reference_as_of") != reference_as_of
+                or payload.get("reference_source_version")
+                != reference_source_version
+                or payload.get("reference_content_sha256") != reference_hash
+            ):
+                parser.error(
+                    "existing turnover snapshot reference mismatch"
+                )
         reused = True
     else:
         if args.float_share_reference:

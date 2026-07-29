@@ -188,8 +188,9 @@ def backfill_tushare_supplemental_v1(
         with sqlite3.connect(temporary) as connection:
             connection.execute("BEGIN")
             connection.execute(
-                "DELETE FROM stock_capital_daily WHERE trade_date BETWEEN ? AND ?",
-                (start, end),
+                """DELETE FROM stock_capital_daily
+                   WHERE trade_date BETWEEN ? AND ? AND source=?""",
+                (start, end, "tushare.moneyflow_ths+daily_basic"),
             )
             connection.executemany(
                 """INSERT INTO stock_capital_daily (

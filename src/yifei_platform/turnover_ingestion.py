@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import hashlib
 import json
 import math
 import os
@@ -140,6 +141,9 @@ def build_float_share_reference_v1(
             raise ValueError(f"capital reference {key} mismatch")
     if "baostock" not in str(metadata.get("capital_source", "")).lower():
         raise ValueError("capital reference is not BaoStock-derived")
+    source_version = str(metadata.get("capital_source_version") or "")
+    if source_version not in FLOAT_SHARE_REFERENCE_SOURCE_VERSIONS:
+        raise ValueError("capital reference source version mismatch")
     reference_rows = []
     for stock_code, float_market_cap in rows:
         code = str(stock_code)
@@ -161,7 +165,7 @@ def build_float_share_reference_v1(
     return {
         "schema_version": FLOAT_SHARE_REFERENCE_SCHEMA_VERSION,
         "source": "baostock.daily",
-        "source_version": str(metadata["capital_source_version"]),
+        "source_version": source_version,
         "as_of": requested,
         "created_at": created_at,
         "units": {"float_shares": "SHARE"},
@@ -203,6 +207,7 @@ def build_derived_turnover_snapshot_v1(
     if int(reference.get("row_count", -1)) != len(reference_rows):
         raise ValueError("float-share reference row count mismatch")
     reference_date = date.fromisoformat(str(reference.get("as_of"))).isoformat()
+    reference_content_sha256 = _reference_content_sha256(reference)
     age = _session_age(
         market_database_path, reference_date=reference_date, as_of=requested
     )
@@ -272,6 +277,8 @@ def build_derived_turnover_snapshot_v1(
         "as_of": requested,
         "fetched_at": fetched_at,
         "reference_as_of": reference_date,
+        "reference_source_version": reference_source_version,
+        "reference_content_sha256": reference_content_sha256,
         "reference_age_sessions": age,
         "units": {
             "volume": "SHARE",
@@ -313,6 +320,11 @@ def write_turnover_snapshot_v1(
             os.fsync(handle.fileno())
         try:
             os.link(temporary_name, output)
+            directory_fd = os.open(output.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         except FileExistsError:
             if output.read_bytes() != encoded:
                 raise FileExistsError(
@@ -327,6 +339,26 @@ def write_float_share_reference_v1(
     *, payload: dict[str, object], output: Path,
 ) -> None:
     write_turnover_snapshot_v1(payload=payload, output=output)
+
+
+def float_share_reference_identity_v1(
+    reference: dict[str, object],
+) -> tuple[str, str, str]:
+    return (
+        date.fromisoformat(str(reference.get("as_of"))).isoformat(),
+        str(reference.get("source_version") or ""),
+        _reference_content_sha256(reference),
+    )
+
+
+def _reference_content_sha256(reference: dict[str, object]) -> str:
+    encoded = json.dumps(
+        reference,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _source_rows(database_path: Path, as_of: str) -> tuple[dict[str, object], ...]:

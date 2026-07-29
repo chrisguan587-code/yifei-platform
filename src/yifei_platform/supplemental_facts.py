@@ -463,6 +463,19 @@ def migrate_legacy_board_facts_v1(
                     "legacy ths_board_daily missing columns: "
                     + ", ".join(missing)
                 )
+            if target.exists() and _legacy_board_migration_is_idempotent(
+                connection=connection,
+                published_at=published_at,
+                source_version=source_version,
+            ):
+                latest = _latest(
+                    connection, "ths_board_daily", "trade_date"
+                )
+                return SupplementalMigrationResultV1(
+                    target_path=target,
+                    latest_available_as_of=latest,
+                    schema_version=SUPPLEMENTAL_SCHEMA_VERSION,
+                )
             connection.execute("BEGIN")
             connection.execute("DELETE FROM ths_board_daily")
             connection.execute(
@@ -570,6 +583,7 @@ def _require_ready_dataset(
             """SELECT COUNT(*) FROM stock_capital_daily
                WHERE trade_date=? AND source_version=?""",
             (as_of, source_version),
+            1,
         ),
         "sector_membership_history": (
             """SELECT COUNT(*) FROM sector_membership_history
@@ -577,11 +591,13 @@ def _require_ready_dataset(
                  AND (valid_to_exclusive IS NULL OR valid_to_exclusive>?)
                  AND source_version=?""",
             (as_of, as_of, source_version),
+            1,
         ),
         "sector_fund_flow_daily": (
             """SELECT COUNT(*) FROM sector_fund_flow_daily
                WHERE trade_date=? AND source_version=?""",
             (as_of, source_version),
+            400,
         ),
     }
     if dataset == "ths_board_daily":
@@ -596,14 +612,63 @@ def _require_ready_dataset(
         if metadata.get("board_source_version") != source_version:
             raise ValueError("board readiness source version mismatch")
     elif dataset in queries:
-        query, parameters = queries[dataset]
+        query, parameters, minimum_count = queries[dataset]
         count = connection.execute(query, parameters).fetchone()[0]
     else:
         raise ValueError(f"unsupported readiness dataset: {dataset}")
-    if int(count) <= 0:
+    required_count = 1 if dataset == "ths_board_daily" else minimum_count
+    if int(count) < required_count:
         raise ValueError(
-            f"cannot publish ready for missing dataset {dataset} at {as_of}"
+            f"cannot publish ready for missing dataset or incomplete dataset "
+            f"{dataset} at {as_of}: {count} < {required_count}"
         )
+
+
+def _legacy_board_migration_is_idempotent(
+    *,
+    connection: sqlite3.Connection,
+    published_at: str,
+    source_version: str,
+) -> bool:
+    existing_count = int(connection.execute(
+        "SELECT COUNT(*) FROM main.ths_board_daily"
+    ).fetchone()[0])
+    if existing_count == 0:
+        return False
+    metadata = dict(connection.execute(
+        """SELECT key,value FROM main.supplemental_metadata
+           WHERE key IN ('board_source_version','board_published_at')"""
+    ))
+    if metadata != {
+        "board_source_version": source_version,
+        "board_published_at": published_at,
+    }:
+        raise FileExistsError(
+            "existing board publication identity differs from migration"
+        )
+    columns = (
+        "board_code,board_name,trade_date,open,high,low,close,"
+        "volume,amount,pct_chg"
+    )
+    main_only = int(connection.execute(
+        f"""SELECT COUNT(*) FROM (
+                SELECT {columns} FROM main.ths_board_daily
+                EXCEPT
+                SELECT {columns} FROM legacy.ths_board_daily
+            )"""
+    ).fetchone()[0])
+    legacy_only = int(connection.execute(
+        f"""SELECT COUNT(*) FROM (
+                SELECT {columns} FROM legacy.ths_board_daily
+                EXCEPT
+                SELECT {columns} FROM main.ths_board_daily
+            )"""
+    ).fetchone()[0])
+    if main_only or legacy_only:
+        raise FileExistsError(
+            "existing board publication content differs from migration"
+        )
+    return True
 def _create_schema(connection: sqlite3.Connection) -> None:
     membership_columns = _columns(
         connection, "sector_membership_history"

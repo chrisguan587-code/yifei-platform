@@ -25,6 +25,7 @@ from yifei_platform.supplemental_facts import (
     SectorMembershipReaderV1,
     StockCapitalFactReaderV1,
     calculate_sector_strength_v1,
+    initialize_supplemental_database_v1,
     migrate_legacy_board_facts_v1,
     publish_supplemental_readiness_v1,
 )
@@ -163,6 +164,27 @@ class SupplementalFactsContractTest(unittest.TestCase):
             }
         self.assertIn("ths_board_daily", tables)
         self.assertNotIn("sector_health_daily", tables)
+        before = target.read_bytes()
+        migrate_legacy_board_facts_v1(
+            source_path=legacy,
+            target_path=target,
+            published_at="2026-07-27T10:00:00+08:00",
+            source_version="legacy-ths-board.2026-07-27.v1",
+        )
+        self.assertEqual(before, target.read_bytes())
+        with sqlite3.connect(legacy) as connection:
+            connection.execute(
+                """UPDATE ths_board_daily SET close=3
+                   WHERE board_code='B001' AND trade_date='2026-07-09'"""
+            )
+        with self.assertRaisesRegex(FileExistsError, "content differs"):
+            migrate_legacy_board_facts_v1(
+                source_path=legacy,
+                target_path=target,
+                published_at="2026-07-27T10:00:00+08:00",
+                source_version="legacy-ths-board.2026-07-27.v1",
+            )
+        self.assertEqual(before, target.read_bytes())
 
     def test_tushare_backfill_joins_same_source_units_and_pit_membership(self) -> None:
         market = self.root / "market.db"
@@ -260,6 +282,52 @@ class SupplementalFactsContractTest(unittest.TestCase):
                     reader.read_as_of(session).status,
                 )
 
+    def test_tushare_backfill_preserves_rows_owned_by_other_sources(
+        self,
+    ) -> None:
+        market = self.root / "tushare-shared-market.db"
+        target = self.root / "tushare-shared.db"
+        with sqlite3.connect(market) as connection:
+            connection.execute(
+                "CREATE TABLE stock_daily (stock_code TEXT, trade_date TEXT)"
+            )
+            connection.executemany(
+                "INSERT INTO stock_daily VALUES (?, '2026-07-09')",
+                [(code,) for code in ("000001", "000002", "000003")],
+            )
+        backfill_tushare_supplemental_v1(
+            client=_FakeTushareClient(),
+            market_database_path=market,
+            target_path=target,
+            start_date="2026-07-09",
+            end_date="2026-07-09",
+            fetched_at="2026-07-27T10:00:00+08:00",
+        )
+        with sqlite3.connect(target) as connection:
+            connection.execute(
+                """INSERT INTO stock_capital_daily VALUES
+                   (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "999999", None, "2026-07-09", 1, 2, "CNY", "CNY",
+                    "another.provider", "another.v1",
+                    "2026-07-27T10:00:00+08:00",
+                ),
+            )
+        backfill_tushare_supplemental_v1(
+            client=_FakeTushareClient(),
+            market_database_path=market,
+            target_path=target,
+            start_date="2026-07-09",
+            end_date="2026-07-09",
+            fetched_at="2026-07-28T10:00:00+08:00",
+        )
+        with sqlite3.connect(target) as connection:
+            preserved = connection.execute(
+                """SELECT source FROM stock_capital_daily
+                   WHERE stock_code='999999' AND trade_date='2026-07-09'"""
+            ).fetchone()
+        self.assertEqual(("another.provider",), preserved)
+
     def test_public_backfill_normalizes_to_shares_cny_and_pit_sw_l2(self) -> None:
         market = self.root / "public-market.db"
         target = self.root / "public-backfill.db"
@@ -301,6 +369,69 @@ class SupplementalFactsContractTest(unittest.TestCase):
             ))
         self.assertEqual("SHARE", metadata["capital_volume_raw_unit"])
         self.assertEqual("PERCENT", metadata["capital_turnover_raw_unit"])
+
+    def test_public_backfill_preserves_rows_owned_by_other_sources(
+        self,
+    ) -> None:
+        market = self.root / "public-shared-market.db"
+        target = self.root / "public-shared.db"
+        with sqlite3.connect(market) as connection:
+            connection.execute(
+                """CREATE TABLE stock_daily (
+                    stock_code TEXT, stock_name TEXT, trade_date TEXT
+                )"""
+            )
+            connection.executemany(
+                "INSERT INTO stock_daily VALUES (?, ?, '2026-07-09')",
+                [(code, code) for code in ("000001", "000002", "000003")],
+            )
+        kwargs = {
+            "capital_client": _FakePublicCapitalClient(),
+            "daily_client": _FakeBaoStockClient(),
+            "industry_client": _FakeCninfoClient(),
+            "market_database_path": market,
+            "target_path": target,
+            "start_date": "2026-07-09",
+            "end_date": "2026-07-09",
+        }
+        backfill_public_supplemental_v1(
+            **kwargs,
+            fetched_at="2026-07-27T10:00:00+08:00",
+        )
+        with sqlite3.connect(target) as connection:
+            connection.execute(
+                """INSERT INTO stock_capital_daily VALUES
+                   (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "999999", None, "2026-07-09", 1, 2, "CNY", "CNY",
+                    "another.provider", "another.v1",
+                    "2026-07-27T10:00:00+08:00",
+                ),
+            )
+            connection.execute(
+                """INSERT INTO sector_membership_history VALUES
+                   (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "999999", None, "OTHER", "其他", "L2",
+                    "2020-01-01", None, "another.provider", "another.v1",
+                    "2026-07-27T10:00:00+08:00",
+                ),
+            )
+        backfill_public_supplemental_v1(
+            **kwargs,
+            fetched_at="2026-07-28T10:00:00+08:00",
+        )
+        with sqlite3.connect(target) as connection:
+            capital_source = connection.execute(
+                """SELECT source FROM stock_capital_daily
+                   WHERE stock_code='999999'"""
+            ).fetchone()
+            membership_source = connection.execute(
+                """SELECT source FROM sector_membership_history
+                   WHERE stock_code='999999'"""
+            ).fetchone()
+        self.assertEqual(("another.provider",), capital_source)
+        self.assertEqual(("another.provider",), membership_source)
 
     def test_eastmoney_payload_and_turnover_units_are_cross_checked(self) -> None:
         payload = {
@@ -785,6 +916,42 @@ class SupplementalFactsContractTest(unittest.TestCase):
                             "stock_capital_daily": None,
                         },
                     )
+
+    def test_sector_flow_readiness_rechecks_frozen_completeness_floor(
+        self,
+    ) -> None:
+        initialize_supplemental_database_v1(self.db_path)
+        with sqlite3.connect(self.db_path) as connection:
+            connection.executemany(
+                """INSERT INTO sector_fund_flow_daily (
+                       trade_date, sector_code, sector_name, amount,
+                       change_pct, main_inflow, up_count, down_count,
+                       lead_stock_name, lead_stock_chg, amount_unit,
+                       main_inflow_unit, source, source_version, fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    (
+                        "2026-07-09", f"BK{index:04d}", None, None,
+                        None, 1.0, None, None, None, None, "CNY",
+                        "CNY", "akshare.sector_em.industry",
+                        "sector-em.v1", "2026-07-27T15:20:00+08:00",
+                    )
+                    for index in range(399)
+                ),
+            )
+        with self.assertRaisesRegex(ValueError, "incomplete dataset"):
+            publish_supplemental_readiness_v1(
+                database_path=self.db_path,
+                readiness_root=self.root / "incomplete-sector-readiness",
+                as_of="2026-07-09",
+                published_at="2026-07-27T15:30:00+08:00",
+                source_versions={
+                    "sector_fund_flow_daily": "sector-em.v1",
+                },
+                dataset_coverages={
+                    "sector_fund_flow_daily": None,
+                },
+            )
 
     @staticmethod
     def _bar(stock_code: str, pct_chg: float) -> StockDailyFactV1:

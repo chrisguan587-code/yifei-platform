@@ -119,7 +119,6 @@ def publish_sector_flow_daily_v1(
         rows=rows,
         as_of=requested,
     )
-    _publish_immutable_json(snapshot_path, snapshot)
     _publish_rows(
         target_path=target_path,
         rows=rows,
@@ -127,6 +126,7 @@ def publish_sector_flow_daily_v1(
         fetched_at=fetched_at,
         source_version=source_version,
     )
+    _publish_immutable_json(snapshot_path, snapshot)
     return SectorFlowPublishResultV1(
         target_path=target_path.resolve(),
         raw_snapshot_path=snapshot_path,
