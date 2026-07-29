@@ -11,7 +11,10 @@ import tempfile
 from typing import Iterable
 from urllib.request import Request, urlopen
 
-from .supplemental_facts import initialize_supplemental_database_v1
+from .supplemental_facts import (
+    initialize_supplemental_database_v1,
+    serialized_supplemental_publication_v1,
+)
 
 
 TUSHARE_API_URL = "https://api.tushare.pro"
@@ -25,6 +28,8 @@ class TushareBackfillResultV1:
     end_date: str
     latest_capital_as_of: str
     membership_available_through: str
+    capital_coverage: float
+    membership_coverage: float
     source_version: str
 
 
@@ -68,6 +73,7 @@ class TushareApiClientV1:
         return tuple(dict(zip(names, row, strict=True)) for row in rows)
 
 
+@serialized_supplemental_publication_v1
 def backfill_tushare_supplemental_v1(
     *,
     client: TushareApiClientV1,
@@ -186,16 +192,45 @@ def backfill_tushare_supplemental_v1(
                 (start, end),
             )
             connection.executemany(
-                "INSERT INTO stock_capital_daily VALUES (?,?,?,?,?,?,?,?,?,?)",
+                """INSERT INTO stock_capital_daily (
+                       stock_code, stock_name, trade_date,
+                       vendor_net_amount, float_market_cap, amount_unit,
+                       market_cap_unit, source, source_version, fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 capital_rows,
             )
+            existing_memberships = connection.execute(
+                """SELECT stock_code, stock_name, sector_code, sector_name,
+                          sector_level, valid_from, valid_to_exclusive,
+                          source, source_version, fetched_at
+                   FROM sector_membership_history
+                   WHERE source=?
+                   ORDER BY stock_code, valid_from, sector_code""",
+                ("tushare.index_member_all",),
+            ).fetchall()
+            preserved_memberships = _subtract_membership_window(
+                existing_memberships,
+                start=start,
+                end=end,
+            )
+            merged_memberships = sorted(
+                {tuple(row) for row in (
+                    preserved_memberships + membership_rows
+                )},
+                key=lambda row: (str(row[0]), str(row[5]), str(row[2])),
+            )
+            _validate_membership_intervals(merged_memberships)
             connection.execute(
                 "DELETE FROM sector_membership_history WHERE source=?",
                 ("tushare.index_member_all",),
             )
             connection.executemany(
-                "INSERT INTO sector_membership_history VALUES (?,?,?,?,?,?,?,?,?,?)",
-                membership_rows,
+                """INSERT INTO sector_membership_history (
+                       stock_code, stock_name, sector_code, sector_name,
+                       sector_level, valid_from, valid_to_exclusive, source,
+                       source_version, fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                merged_memberships,
             )
             connection.executemany(
                 """INSERT INTO supplemental_metadata(key, value)
@@ -228,6 +263,8 @@ def backfill_tushare_supplemental_v1(
         end_date=end,
         latest_capital_as_of=sessions[-1],
         membership_available_through=end,
+        capital_coverage=capital_coverage,
+        membership_coverage=membership_coverage,
         source_version=source_version,
     )
 
@@ -344,6 +381,37 @@ def _bound_membership_rows(
         updated[6] = bounded_to
         bounded.append(tuple(updated))
     return bounded
+
+
+def _subtract_membership_window(
+    memberships: Iterable[tuple[object, ...]],
+    *,
+    start: str,
+    end: str,
+) -> list[tuple[object, ...]]:
+    end_exclusive = (
+        date.fromisoformat(end) + timedelta(days=1)
+    ).isoformat()
+    preserved: list[tuple[object, ...]] = []
+    for raw in memberships:
+        row = tuple(raw)
+        valid_from = str(row[5])
+        valid_to = _optional_string(row[6])
+        if (
+            (valid_to is not None and valid_to <= start)
+            or valid_from >= end_exclusive
+        ):
+            preserved.append(row)
+            continue
+        if valid_from < start:
+            left = list(row)
+            left[6] = start
+            preserved.append(tuple(left))
+        if valid_to is None or valid_to > end_exclusive:
+            right = list(row)
+            right[5] = end_exclusive
+            preserved.append(tuple(right))
+    return preserved
 
 
 def _validate_membership_intervals(

@@ -12,7 +12,10 @@ import tempfile
 from typing import Protocol, Sequence
 from zoneinfo import ZoneInfo
 
-from .supplemental_facts import initialize_supplemental_database_v1
+from .supplemental_facts import (
+    initialize_supplemental_database_v1,
+    serialized_supplemental_publication_v1,
+)
 
 
 SECTOR_FLOW_SOURCE_VERSION = "levistock.eastmoney-sector-em.industry.v1"
@@ -48,6 +51,7 @@ class LevistockSectorFlowClientV1:
         return self._levistock.sector_em(sector_type="industry")
 
 
+@serialized_supplemental_publication_v1
 def publish_sector_flow_daily_v1(
     *,
     client: SectorFlowClientV1,
@@ -216,8 +220,12 @@ def _publish_rows(
                     )
                 return
             connection.executemany(
-                """INSERT INTO sector_fund_flow_daily
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO sector_fund_flow_daily (
+                       trade_date, sector_code, sector_name, amount,
+                       change_pct, main_inflow, up_count, down_count,
+                       lead_stock_name, lead_stock_chg, amount_unit,
+                       main_inflow_unit, source, source_version, fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 rows,
             )
             connection.executemany(

@@ -37,13 +37,17 @@ else
       echo "exact-date turnover failed with non-fallback status: $status" >&2
       exit "$status"
     fi
-    echo "warning: exact-date BaoStock unavailable; using bounded reference" >&2
-    "$(dirname "$0")/../.venv/bin/yifei-platform-turnover-snapshot" \
-      --market-db "$SOURCE_DB" \
-      --as-of "$AS_OF" \
-      --fetched-at "$FETCHED_AT" \
-      --float-share-reference "$FLOAT_SHARE_REFERENCE" \
-      --output "$TURNOVER_SNAPSHOT"
+    if [ -f "$TURNOVER_SNAPSHOT" ]; then
+      echo "reusing snapshot created by a concurrent runner"
+    else
+      echo "warning: exact-date BaoStock unavailable; using bounded reference" >&2
+      "$(dirname "$0")/../.venv/bin/yifei-platform-turnover-snapshot" \
+        --market-db "$SOURCE_DB" \
+        --as-of "$AS_OF" \
+        --fetched-at "$FETCHED_AT" \
+        --float-share-reference "$FLOAT_SHARE_REFERENCE" \
+        --output "$TURNOVER_SNAPSHOT"
+    fi
   fi
 fi
 

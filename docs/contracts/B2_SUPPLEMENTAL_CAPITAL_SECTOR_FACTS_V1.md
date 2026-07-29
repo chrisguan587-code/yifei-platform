@@ -33,14 +33,12 @@ this field.
 
 ### Public-data unit normalization
 
-The no-token adapter uses AKShare's Eastmoney individual capital-flow history
+The no-token adapter uses Eastmoney individual capital-flow history over HTTPS
 for the numerator and BaoStock unadjusted daily bars for the denominator.
-Eastmoney's HTTPS transport is not reliable in the supported network
-environment, so source version
-`eastmoney-http-moneyflow+baostock-daily.v2` uses the same public endpoint over
-HTTP without credentials. Because the transport is unauthenticated, every
-published row is cross-checked against independently fetched BaoStock turnover
-before publication.
+Source version `eastmoney-https-moneyflow+baostock-daily.v3` fails closed when
+the authenticated transport is unavailable. It does not downgrade to
+plaintext HTTP. Every published row is also cross-checked against independently
+fetched BaoStock turnover before publication.
 BaoStock fields are declared and normalized at the source boundary:
 
 - `volume`: `SHARE`, never lots;
@@ -88,7 +86,9 @@ The endpoint is rate limited. The adapter uses finite retry, proxy/direct
 fallback, and a fixed delay after each real response. A per-stock transport
 failure may be recorded as explicit missing only when a fixed control stock
 returns a valid non-empty response at the same time. If the control also
-fails, the whole batch stops and resumes from immutable cache later.
+fails, the whole batch stops and resumes from immutable cache later. A
+transport failure is not written into the immutable cache as a legitimate
+empty vendor response, so a later run retries that stock.
 
 Public-data coverage is evaluated over A-share codes supported consistently by
 both historical adapters: Shenzhen main board (`00`), ChiNext (`30`), Shanghai

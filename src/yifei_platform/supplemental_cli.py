@@ -172,12 +172,14 @@ def main() -> int:
         }
         if args.readiness_root:
             marker = publish_supplemental_readiness_v1(
+                database_path=result.target_path,
                 readiness_root=args.readiness_root,
                 as_of=result.latest_available_as_of,
                 published_at=args.published_at,
                 source_versions={
                     "ths_board_daily": args.source_version,
                 },
+                dataset_coverages={"ths_board_daily": None},
                 bundle="v4-research-board",
             )
             payload["readiness_marker_id"] = marker.marker_id
@@ -208,12 +210,17 @@ def main() -> int:
         }
         if args.readiness_root:
             marker = publish_supplemental_readiness_v1(
+                database_path=result.target_path,
                 readiness_root=args.readiness_root,
                 as_of=result.latest_capital_as_of,
                 published_at=args.fetched_at,
                 source_versions={
                     "stock_capital_daily": result.source_version,
                     "sector_membership_history": result.source_version,
+                },
+                dataset_coverages={
+                    "stock_capital_daily": None,
+                    "sector_membership_history": None,
                 },
                 bundle="v4-research-capital-sector",
             )
@@ -255,12 +262,17 @@ def main() -> int:
         }
         if args.readiness_root:
             marker = publish_supplemental_readiness_v1(
+                database_path=result.target_path,
                 readiness_root=args.readiness_root,
                 as_of=result.latest_capital_as_of,
                 published_at=args.fetched_at,
                 source_versions={
                     "stock_capital_daily": result.source_version,
                     "sector_membership_history": result.source_version,
+                },
+                dataset_coverages={
+                    "stock_capital_daily": None,
+                    "sector_membership_history": None,
                 },
                 bundle="v4-research-capital-sector",
             )
@@ -323,11 +335,15 @@ def main() -> int:
         }
         if args.readiness_root:
             marker = publish_supplemental_readiness_v1(
+                database_path=result.target_path,
                 readiness_root=args.readiness_root,
                 as_of=result.latest_capital_as_of,
                 published_at=args.fetched_at,
                 source_versions={
                     "stock_capital_daily": result.source_version,
+                },
+                dataset_coverages={
+                    "stock_capital_daily": None,
                 },
                 bundle="v4-research-stock-capital",
             )
@@ -391,11 +407,15 @@ def main() -> int:
         }
         if args.readiness_root:
             marker = publish_supplemental_readiness_v1(
+                database_path=result.target_path,
                 readiness_root=args.readiness_root,
                 as_of=result.latest_capital_as_of,
                 published_at=args.fetched_at,
                 source_versions={
                     "stock_capital_daily": result.source_version,
+                },
+                dataset_coverages={
+                    "stock_capital_daily": None,
                 },
                 bundle="v4-research-stock-capital",
             )
@@ -405,7 +425,7 @@ def main() -> int:
             cache_dir=args.cache_dir,
             start_date=args.start_date,
             end_date=args.end_date,
-            source_version=PUBLIC_DATA_SOURCE_VERSION,
+            source_version=args.source_version,
         )
         akshare_client = AksharePublicDataClientV1(cache_dir=args.cache_dir)
         result = backfill_cninfo_membership_v1(
@@ -432,11 +452,15 @@ def main() -> int:
         }
         if args.readiness_root:
             marker = publish_supplemental_readiness_v1(
+                database_path=result.target_path,
                 readiness_root=args.readiness_root,
                 as_of=result.membership_available_through,
                 published_at=args.fetched_at,
                 source_versions={
                     "sector_membership_history": result.source_version,
+                },
+                dataset_coverages={
+                    "sector_membership_history": None,
                 },
                 bundle="v4-research-sector-membership",
             )
@@ -461,11 +485,15 @@ def main() -> int:
         }
         if args.readiness_root:
             marker = publish_supplemental_readiness_v1(
+                database_path=result.target_path,
                 readiness_root=args.readiness_root,
                 as_of=result.as_of,
                 published_at=args.fetched_at,
                 source_versions={
                     "sector_fund_flow_daily": result.source_version,
+                },
+                dataset_coverages={
+                    "sector_fund_flow_daily": None,
                 },
                 bundle="v4-research-sector-capital",
             )

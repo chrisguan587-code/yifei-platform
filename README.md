@@ -120,7 +120,7 @@ yifei-platform-supplemental collect-sector-flow \
 
 The token is read only from an environment variable and is never printed or
 stored in the database. `backfill-public` requires no token and uses
-AKShare/Eastmoney capital flow, BaoStock daily volume/turnover, and CNInfo
+Eastmoney HTTPS capital flow, BaoStock daily volume/turnover, and CNInfo
 point-in-time SW level-2 industry changes. Install its optional runtime with
 `pip install -e '.[public-data]'`.
 

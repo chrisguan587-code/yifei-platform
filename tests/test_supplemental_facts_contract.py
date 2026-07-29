@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -214,6 +215,50 @@ class SupplementalFactsContractTest(unittest.TestCase):
         self.assertEqual(
             "2026-07-09", metadata["membership_available_through"]
         )
+
+    def test_tushare_smaller_rerun_preserves_validated_outer_history(self) -> None:
+        market = self.root / "tushare-rerun-market.db"
+        target = self.root / "tushare-rerun.db"
+        with sqlite3.connect(market) as connection:
+            connection.execute(
+                "CREATE TABLE stock_daily (stock_code TEXT, trade_date TEXT)"
+            )
+            connection.executemany(
+                "INSERT INTO stock_daily VALUES (?, ?)",
+                [
+                    (code, session)
+                    for session in (
+                        "2026-07-08",
+                        "2026-07-09",
+                        "2026-07-10",
+                    )
+                    for code in ("000001", "000002", "000003")
+                ],
+            )
+        backfill_tushare_supplemental_v1(
+            client=_FakeTushareClient(),
+            market_database_path=market,
+            target_path=target,
+            start_date="2026-07-08",
+            end_date="2026-07-10",
+            fetched_at="2026-07-27T10:00:00+08:00",
+        )
+        backfill_tushare_supplemental_v1(
+            client=_FakeTushareClient(),
+            market_database_path=market,
+            target_path=target,
+            start_date="2026-07-09",
+            end_date="2026-07-09",
+            fetched_at="2026-07-28T10:00:00+08:00",
+        )
+
+        reader = SectorMembershipReaderV1(target)
+        for session in ("2026-07-08", "2026-07-09", "2026-07-10"):
+            with self.subTest(session=session):
+                self.assertEqual(
+                    ReadStatus.OK,
+                    reader.read_as_of(session).status,
+                )
 
     def test_public_backfill_normalizes_to_shares_cny_and_pit_sw_l2(self) -> None:
         market = self.root / "public-market.db"
@@ -587,6 +632,9 @@ class SupplementalFactsContractTest(unittest.TestCase):
             [("000061", "0"), ("000061", "0"), ("000001", "0")],
             calls,
         )
+        self.assertFalse(client.has_capital_cache("000061"))
+        self.assertEqual((), client.read("000061"))
+        self.assertEqual(6, len(calls))
 
     def test_capital_prefetch_is_bounded_and_resumes_cached_codes(self) -> None:
         market = self.root / "prefetch-market.db"
@@ -695,20 +743,48 @@ class SupplementalFactsContractTest(unittest.TestCase):
 
     def test_supplemental_readiness_discloses_status_without_holdout_counts(self) -> None:
         marker = publish_supplemental_readiness_v1(
+            database_path=self.db_path,
             readiness_root=self.root / "readiness",
             as_of="2026-07-09",
             published_at="2026-07-27T10:00:00+08:00",
             source_versions={
-                "stock_capital_daily": "tushare.v1",
+                "stock_capital_daily": "tushare.2026-07.v1",
                 "sector_membership_history": "sw2021.v1",
+            },
+            dataset_coverages={
+                "stock_capital_daily": None,
+                "sector_membership_history": None,
             },
         )
         self.assertEqual("ready", marker.status)
-        snapshot = next(
+        snapshot = json.loads(next(
             (self.root / "readiness" / "quality").rglob("*.json")
-        ).read_text(encoding="utf-8")
-        self.assertNotIn('"coverage":0.', snapshot)
-        self.assertNotIn('"row_count"', snapshot)
+        ).read_text(encoding="utf-8"))
+        self.assertTrue(all(
+            dataset["coverage"] is None
+            for dataset in snapshot["datasets"]
+        ))
+        self.assertNotIn("row_count", snapshot)
+
+    def test_readiness_cannot_claim_missing_or_wrong_source_dataset(self) -> None:
+        for as_of, source_version in (
+            ("2026-07-08", "tushare.2026-07.v1"),
+            ("2026-07-09", "wrong-source.v1"),
+        ):
+            with self.subTest(as_of=as_of, source_version=source_version):
+                with self.assertRaisesRegex(ValueError, "missing dataset"):
+                    publish_supplemental_readiness_v1(
+                        database_path=self.db_path,
+                        readiness_root=self.root / "blocked-readiness",
+                        as_of=as_of,
+                        published_at="2026-07-27T10:00:00+08:00",
+                        source_versions={
+                            "stock_capital_daily": source_version,
+                        },
+                        dataset_coverages={
+                            "stock_capital_daily": None,
+                        },
+                    )
 
     @staticmethod
     def _bar(stock_code: str, pct_chg: float) -> StockDailyFactV1:

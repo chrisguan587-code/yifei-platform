@@ -17,14 +17,17 @@ from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
-from .supplemental_facts import initialize_supplemental_database_v1
+from .supplemental_facts import (
+    initialize_supplemental_database_v1,
+    serialized_supplemental_publication_v1,
+)
 
 
 PUBLIC_DATA_SOURCE_VERSION = (
-    "eastmoney-http-moneyflow+baostock-daily"
+    "eastmoney-https-moneyflow+baostock-daily"
     "+cninfo-sw-l2.v2"
 )
-CAPITAL_SOURCE_VERSION = "eastmoney-http-moneyflow+baostock-daily.v2"
+CAPITAL_SOURCE_VERSION = "eastmoney-https-moneyflow+baostock-daily.v3"
 CAPITAL_SOURCE = "akshare.eastmoney+baostock"
 SINA_CAPITAL_SOURCE_VERSION = "sina-moneyflow-r0+baostock-daily.v2"
 SINA_CAPITAL_SOURCE = "sina.moneyflow.r0+baostock"
@@ -62,6 +65,8 @@ class PublicDataBackfillResultV1:
     end_date: str
     latest_capital_as_of: str
     membership_available_through: str
+    capital_coverage: float
+    membership_coverage: float
     source_version: str
 
 
@@ -135,7 +140,7 @@ class AksharePublicDataClientV1:
                     market_number=market_number,
                 ),
                 attempts=self._retry_attempts,
-                label=f"Eastmoney HTTP capital flow {stock_code}",
+                label=f"Eastmoney HTTPS capital flow {stock_code}",
                 base_delay_seconds=1,
             )
         except RuntimeError:
@@ -147,13 +152,12 @@ class AksharePublicDataClientV1:
                     market_number="0",
                 ),
                 attempts=2,
-                label="Eastmoney HTTP capital flow health control",
+                label="Eastmoney HTTPS capital flow health control",
                 base_delay_seconds=1,
             )
             if not parse_eastmoney_capital_payload_v1(control):
                 raise
             rows: tuple[dict[str, object], ...] = ()
-            self._store("capital", stock_code, rows)
             return rows
         rows = parse_eastmoney_capital_payload_v1(payload)
         time.sleep(EASTMONEY_REQUEST_INTERVAL_SECONDS)
@@ -457,6 +461,7 @@ def prepare_public_cache_v1(
     _write_immutable_json(path, payload)
 
 
+@serialized_supplemental_publication_v1
 def backfill_public_supplemental_v1(
     *,
     capital_client: CapitalFlowClientV1,
@@ -588,14 +593,22 @@ def backfill_public_supplemental_v1(
                 (start, end),
             )
             connection.executemany(
-                "INSERT INTO stock_capital_daily VALUES (?,?,?,?,?,?,?,?,?,?)",
+                """INSERT INTO stock_capital_daily (
+                       stock_code, stock_name, trade_date,
+                       vendor_net_amount, float_market_cap, amount_unit,
+                       market_cap_unit, source, source_version, fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 capital_rows,
             )
             connection.execute(
                 "DELETE FROM sector_membership_history",
             )
             connection.executemany(
-                "INSERT INTO sector_membership_history VALUES (?,?,?,?,?,?,?,?,?,?)",
+                """INSERT INTO sector_membership_history (
+                       stock_code, stock_name, sector_code, sector_name,
+                       sector_level, valid_from, valid_to_exclusive, source,
+                       source_version, fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 membership_rows,
             )
             connection.executemany(
@@ -634,10 +647,13 @@ def backfill_public_supplemental_v1(
         end_date=end,
         latest_capital_as_of=sessions[-1],
         membership_available_through=end,
+        capital_coverage=capital_coverage,
+        membership_coverage=membership_coverage,
         source_version=source_version,
     )
 
 
+@serialized_supplemental_publication_v1
 def backfill_public_capital_v1(
     *,
     capital_client: CapitalFlowClientV1,
@@ -750,7 +766,11 @@ def backfill_public_capital_v1(
                 (start, end),
             )
             connection.executemany(
-                "INSERT INTO stock_capital_daily VALUES (?,?,?,?,?,?,?,?,?,?)",
+                """INSERT INTO stock_capital_daily (
+                       stock_code, stock_name, trade_date,
+                       vendor_net_amount, float_market_cap, amount_unit,
+                       market_cap_unit, source, source_version, fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 capital_rows,
             )
             connection.executemany(
@@ -833,6 +853,7 @@ def prefetch_public_capital_v1(
     )
 
 
+@serialized_supplemental_publication_v1
 def backfill_cninfo_membership_v1(
     *,
     industry_client: IndustryHistoryClientV1,
@@ -902,7 +923,11 @@ def backfill_cninfo_membership_v1(
                 "DELETE FROM sector_membership_history",
             )
             connection.executemany(
-                "INSERT INTO sector_membership_history VALUES (?,?,?,?,?,?,?,?,?,?)",
+                """INSERT INTO sector_membership_history (
+                       stock_code, stock_name, sector_code, sector_name,
+                       sector_level, valid_from, valid_to_exclusive, source,
+                       source_version, fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 membership_rows,
             )
             connection.executemany(
@@ -1132,7 +1157,7 @@ def _read_eastmoney_fund_flow_payload(
         "ut": "b2884a393a59ad64002292a3e90d46a5",
     }
     request = Request(
-        "http://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?"
+        "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?"
         + urlencode(params),
         headers={
             "User-Agent": "Mozilla/5.0",

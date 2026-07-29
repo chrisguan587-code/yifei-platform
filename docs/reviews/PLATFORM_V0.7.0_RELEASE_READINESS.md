@@ -54,8 +54,8 @@ and Readiness state untouched.
 Final working-tree release gate:
 
 ```text
-source-tree tests: 100 passed
-sdist tests:       100 passed
+source-tree tests: 102 passed
+sdist tests:       102 passed
 wheel build:       passed
 isolated install:  yifei-platform 0.7.0 passed
 ```
@@ -130,13 +130,25 @@ pre-snapshot coverage enforcement, temporary-source fallback classification,
 source-mode identity, PIT timestamp order, Tushare membership availability
 bounds, sector snapshot/database conflict ordering, optional columns, cache
 range identity and deterministic SQLite closure. These were resolved and
-covered by tests before the 100-test release gate.
+covered by tests before the initial 100-test release gate.
 
-One finding was rejected with contract evidence: a stock-specific Eastmoney
-transport failure may be cached as explicit missing only after a fixed control
-stock returns a healthy non-empty response. B2 deliberately freezes this
-behavior; missing counts against the 98% batch gate and is never published as
-zero capital flow.
+Final-SHA review session `d6142175-9c32-461a-a74e-992ac762dda4` examined
+commit `d62348c` and did not approve it. It identified additional writer-lock,
+Readiness verification, Tushare interval-preservation, HTTPS integrity,
+fallback-race and strict-reference-lineage gaps. It also reported one remote
+subtask error, so zero findings could not have been inferred from that run.
+
+The valid findings were resolved in a follow-up commit. All supplemental
+database replacement writers now share one target-scoped inter-process lock;
+Readiness verifies exact-date/source rows in the target database; smaller
+Tushare reruns preserve validated outer intervals; Eastmoney is HTTPS-only and
+transport failures are retried rather than cached as legitimate empties; the
+turnover fallback rechecks a concurrently published snapshot; and the float
+share reference accepts only the audited source version.
+
+The suggested reduction of the sector-flow floor from 400 was rejected using
+source data rather than assumption: V3's actual `sector_em(industry)` history
+contains 487–496 rows in recent complete snapshots and 496 on 2026-07-28.
 
 The product quality standard still requires a second Open Code Review against
 the immutable final commit SHA. Until that review passes, this document does

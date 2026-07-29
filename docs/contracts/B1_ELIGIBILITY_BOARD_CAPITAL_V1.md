@@ -35,6 +35,11 @@ therefore requires:
 - `abs(main_inflow) <= amount`;
 - breadth counts are nonnegative integers.
 
+The 400-row floor is source-specific and was calibrated against the actual V3
+`sector_em(industry)` series: recent complete snapshots contain 487–496 rows
+and 2026-07-28 contains 496. Falling below 400 is therefore treated as a
+truncated response, not as a change in the expected industry taxonomy.
+
 The upstream `volume` field is copied only into the immutable raw snapshot and
 is marked `unit_not_audited`. It is not written to the normalized fact table
 and must not be interpreted as shares or lots.

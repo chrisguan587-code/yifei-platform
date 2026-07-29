@@ -16,6 +16,9 @@ FLOAT_SHARE_REFERENCE_SCHEMA_VERSION = "baostock-float-share-reference.v1"
 DERIVED_TURNOVER_SOURCE_VERSION = "baostock-float-share-derived-turnover.v1"
 FLOAT_SHARE_REFERENCE_MAX_AGE_SESSIONS = 20
 TURNOVER_COVERAGE_MINIMUM = 0.99
+FLOAT_SHARE_REFERENCE_SOURCE_VERSIONS = frozenset({
+    "sina-moneyflow-r0+baostock-daily.v2",
+})
 
 
 class BaoStockTurnoverClientV1(Protocol):
@@ -183,7 +186,7 @@ def build_derived_turnover_snapshot_v1(
     if reference.get("source") != "baostock.daily":
         raise ValueError("float-share reference source mismatch")
     reference_source_version = str(reference.get("source_version") or "")
-    if "baostock" not in reference_source_version.lower():
+    if reference_source_version not in FLOAT_SHARE_REFERENCE_SOURCE_VERSIONS:
         raise ValueError("float-share reference source version mismatch")
     if reference.get("units") != {"float_shares": "SHARE"}:
         raise ValueError("float-share reference unit mismatch")

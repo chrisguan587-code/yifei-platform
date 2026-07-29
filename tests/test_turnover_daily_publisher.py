@@ -201,7 +201,7 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
         reference = {
             "schema_version": "baostock-float-share-reference.v1",
             "source": "baostock.daily",
-            "source_version": "baostock-test.v1",
+            "source_version": "sina-moneyflow-r0+baostock-daily.v2",
             "as_of": "2026-06-01",
             "created_at": "2026-06-01T18:00:00+08:00",
             "units": {"float_shares": "SHARE"},
@@ -229,7 +229,7 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
         )
         cases = (
             ("source", "another.vendor", "source mismatch"),
-            ("source_version", "unverified.v1", "source version mismatch"),
+            ("source_version", "evil-baostock.v1", "source version mismatch"),
             ("row_count", 1, "row count mismatch"),
         )
         for field, value, message in cases:

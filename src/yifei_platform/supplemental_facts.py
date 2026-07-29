@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from contextlib import closing
+from contextlib import closing, contextmanager
+import fcntl
+from functools import wraps
 import os
 from pathlib import Path
 import shutil
@@ -17,6 +19,30 @@ from .readiness import ReadinessMarkerV1, ReadinessStoreV1
 
 
 SUPPLEMENTAL_SCHEMA_VERSION = "supplemental-market-facts.v1"
+
+
+def serialized_supplemental_publication_v1(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        target_path = kwargs.get("target_path")
+        if not isinstance(target_path, Path):
+            raise TypeError("target_path must be a Path")
+        with _supplemental_publication_lock(target_path):
+            return function(*args, **kwargs)
+    return wrapped
+
+
+@contextmanager
+def _supplemental_publication_lock(target_path: Path):
+    target = target_path.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = target.parent / f".{target.name}.publish.lock"
+    with lock_path.open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 @dataclass(frozen=True)
@@ -395,6 +421,7 @@ def calculate_sector_strength_v1(
     return tuple(facts)
 
 
+@serialized_supplemental_publication_v1
 def migrate_legacy_board_facts_v1(
     *,
     source_path: Path,
@@ -483,15 +510,29 @@ def initialize_supplemental_database_v1(database_path: Path) -> None:
 
 def publish_supplemental_readiness_v1(
     *,
+    database_path: Path,
     readiness_root: Path,
     as_of: str,
     published_at: str,
     source_versions: dict[str, str],
+    dataset_coverages: dict[str, float | None],
     bundle: str = "v4-research-supplemental",
 ) -> ReadinessMarkerV1:
     requested = date.fromisoformat(as_of).isoformat()
     if not source_versions:
         raise ValueError("source_versions cannot be empty")
+    if set(dataset_coverages) != set(source_versions):
+        raise ValueError(
+            "dataset_coverages must match source_versions"
+        )
+    with closing(_read_only(database_path.resolve(strict=True))) as connection:
+        for dataset, source_version in source_versions.items():
+            _require_ready_dataset(
+                connection=connection,
+                dataset=dataset,
+                as_of=requested,
+                source_version=source_version,
+            )
     snapshot = DataQualitySnapshotV1.create(
         as_of=requested,
         observed_at=published_at,
@@ -502,7 +543,7 @@ def publish_supplemental_readiness_v1(
                 status=QualityStatus.OK,
                 observed_as_of=requested,
                 source_version=source_version,
-                coverage=None,
+                coverage=dataset_coverages[dataset],
                 freshness_lag_sessions=0,
             )
             for dataset, source_version in source_versions.items()
@@ -517,6 +558,52 @@ def publish_supplemental_readiness_v1(
     )
 
 
+def _require_ready_dataset(
+    *,
+    connection: sqlite3.Connection,
+    dataset: str,
+    as_of: str,
+    source_version: str,
+) -> None:
+    queries = {
+        "stock_capital_daily": (
+            """SELECT COUNT(*) FROM stock_capital_daily
+               WHERE trade_date=? AND source_version=?""",
+            (as_of, source_version),
+        ),
+        "sector_membership_history": (
+            """SELECT COUNT(*) FROM sector_membership_history
+               WHERE valid_from<=?
+                 AND (valid_to_exclusive IS NULL OR valid_to_exclusive>?)
+                 AND source_version=?""",
+            (as_of, as_of, source_version),
+        ),
+        "sector_fund_flow_daily": (
+            """SELECT COUNT(*) FROM sector_fund_flow_daily
+               WHERE trade_date=? AND source_version=?""",
+            (as_of, source_version),
+        ),
+    }
+    if dataset == "ths_board_daily":
+        count = connection.execute(
+            "SELECT COUNT(*) FROM ths_board_daily WHERE trade_date=?",
+            (as_of,),
+        ).fetchone()[0]
+        metadata = dict(connection.execute(
+            """SELECT key,value FROM supplemental_metadata
+               WHERE key='board_source_version'"""
+        ))
+        if metadata.get("board_source_version") != source_version:
+            raise ValueError("board readiness source version mismatch")
+    elif dataset in queries:
+        query, parameters = queries[dataset]
+        count = connection.execute(query, parameters).fetchone()[0]
+    else:
+        raise ValueError(f"unsupported readiness dataset: {dataset}")
+    if int(count) <= 0:
+        raise ValueError(
+            f"cannot publish ready for missing dataset {dataset} at {as_of}"
+        )
 def _create_schema(connection: sqlite3.Connection) -> None:
     membership_columns = _columns(
         connection, "sector_membership_history"
