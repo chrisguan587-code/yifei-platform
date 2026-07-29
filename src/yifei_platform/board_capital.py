@@ -95,7 +95,10 @@ class CapitalFactReaderV1:
             table="sector_fund_flow_daily",
             as_of=as_of,
             fields=fields,
-            required={"sector_code", "trade_date"},
+            required={
+                "sector_code", "trade_date",
+                "amount_unit", "main_inflow_unit",
+            },
             schema_version=self.schema_version,
             factory=lambda row: SectorCapitalFactV1(
                 sector_code=str(row["sector_code"]), sector_name=_string(row["sector_name"]),
@@ -147,6 +150,24 @@ class _FactTableReader:
                     return self._result(
                         ReadStatus.MISSING, table, requested, schema_version, latest=latest,
                         reasons=(f"{table}_as_of_missing",),
+                    )
+                null_required = sorted({
+                    name
+                    for row in rows
+                    for name in required
+                    if row[name] is None
+                })
+                if null_required:
+                    return self._result(
+                        ReadStatus.BLOCKED,
+                        table,
+                        requested,
+                        schema_version,
+                        latest=latest,
+                        reasons=tuple(
+                            f"required_value_missing:{name}"
+                            for name in null_required
+                        ),
                     )
                 return self._result(
                     ReadStatus.OK, table, requested, schema_version,

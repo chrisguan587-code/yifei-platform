@@ -72,12 +72,22 @@ else
       exit "$status"
     else
       echo "warning: exact-date BaoStock unavailable; using bounded reference" >&2
-      "$SNAPSHOT_CLI" \
+      if "$SNAPSHOT_CLI" \
         --market-db "$SOURCE_DB" \
         --as-of "$AS_OF" \
         --fetched-at "$FETCHED_AT" \
         --float-share-reference "$FLOAT_SHARE_REFERENCE" \
-        --output "$TURNOVER_SNAPSHOT"
+        --output "$TURNOVER_SNAPSHOT"; then
+        :
+      else
+        fallback_status="$?"
+        if [ -f "$TURNOVER_SNAPSHOT" ]; then
+          validate_existing_snapshot
+          echo "reusing validated fallback snapshot created by a concurrent runner"
+        else
+          exit "$fallback_status"
+        fi
+      fi
     fi
   fi
 fi

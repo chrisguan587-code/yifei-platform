@@ -339,6 +339,43 @@ class SupplementalFactsContractTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(("another.provider",), preserved)
 
+    def test_tushare_backfill_fails_closed_on_cross_source_key_conflict(
+        self,
+    ) -> None:
+        market = self.root / "tushare-conflict-market.db"
+        target = self.root / "tushare-conflict.db"
+        with sqlite3.connect(market) as connection:
+            connection.execute(
+                "CREATE TABLE stock_daily (stock_code TEXT, trade_date TEXT)"
+            )
+            connection.executemany(
+                "INSERT INTO stock_daily VALUES (?, '2026-07-09')",
+                [(code,) for code in ("000001", "000002", "000003")],
+            )
+        kwargs = {
+            "client": _FakeTushareClient(),
+            "market_database_path": market,
+            "target_path": target,
+            "start_date": "2026-07-09",
+            "end_date": "2026-07-09",
+        }
+        backfill_tushare_supplemental_v1(
+            **kwargs,
+            fetched_at="2026-07-27T10:00:00+08:00",
+        )
+        with sqlite3.connect(target) as connection:
+            connection.execute(
+                """UPDATE stock_capital_daily SET source='another.provider'
+                   WHERE stock_code='000001' AND trade_date='2026-07-09'"""
+            )
+        before = target.read_bytes()
+        with self.assertRaisesRegex(ValueError, "cross-source"):
+            backfill_tushare_supplemental_v1(
+                **kwargs,
+                fetched_at="2026-07-28T10:00:00+08:00",
+            )
+        self.assertEqual(before, target.read_bytes())
+
     def test_public_backfill_normalizes_to_shares_cny_and_pit_sw_l2(self) -> None:
         market = self.root / "public-market.db"
         target = self.root / "public-backfill.db"
@@ -1046,6 +1083,86 @@ class SupplementalFactsContractTest(unittest.TestCase):
                     "sector_fund_flow_daily": None,
                 },
             )
+
+    def test_readiness_requires_l2_membership_and_cny_sector_units(
+        self,
+    ) -> None:
+        database = self.root / "readiness-contract.db"
+        initialize_supplemental_database_v1(database)
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                """INSERT INTO sector_membership_history VALUES
+                   (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "000001", None, "L1", "一级", "L1",
+                    "2020-01-01", None, "vendor", "membership.v1",
+                    "2026-07-27T15:20:00+08:00",
+                ),
+            )
+            connection.executemany(
+                """INSERT INTO sector_fund_flow_daily (
+                       trade_date, sector_code, sector_name, amount,
+                       change_pct, main_inflow, up_count, down_count,
+                       lead_stock_name, lead_stock_chg, amount_unit,
+                       main_inflow_unit, source, source_version, fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    (
+                        "2026-07-09", f"BK{index:04d}", None, None,
+                        None, 1.0, None, None, None, None,
+                        "CNY" if index else "CNY_10K",
+                        "CNY", "vendor", "sector.v1",
+                        "2026-07-27T15:20:00+08:00",
+                    )
+                    for index in range(400)
+                ),
+            )
+        for dataset, source_version in (
+            ("sector_membership_history", "membership.v1"),
+            ("sector_fund_flow_daily", "sector.v1"),
+        ):
+            with self.subTest(dataset=dataset):
+                with self.assertRaisesRegex(
+                    ValueError, "missing dataset|incomplete dataset"
+                ):
+                    publish_supplemental_readiness_v1(
+                        database_path=database,
+                        readiness_root=self.root / f"blocked-{dataset}",
+                        as_of="2026-07-09",
+                        published_at="2026-07-27T15:30:00+08:00",
+                        source_versions={dataset: source_version},
+                        dataset_coverages={dataset: None},
+                    )
+
+    def test_capital_source_history_window_is_fail_closed(self) -> None:
+        market = self.root / "window-market.db"
+        target = self.root / "window-target.db"
+        with sqlite3.connect(market) as connection:
+            connection.execute(
+                "CREATE TABLE stock_daily (stock_code TEXT, trade_date TEXT)"
+            )
+            connection.executemany(
+                "INSERT INTO stock_daily VALUES ('000001', ?)",
+                [("2026-07-09",), ("2026-07-10",)],
+            )
+
+        class OneSessionClient:
+            history_row_limit = 1
+
+            def read(self, _stock_code):
+                raise AssertionError("window must fail before source fetch")
+
+        with self.assertRaisesRegex(ValueError, "history limit 1"):
+            backfill_public_capital_v1(
+                capital_client=OneSessionClient(),
+                daily_client=_FakeBaoStockClient(),
+                market_database_path=market,
+                target_path=target,
+                start_date="2026-07-09",
+                end_date="2026-07-10",
+                fetched_at="2026-07-28T12:00:00+08:00",
+            )
+        self.assertFalse(target.exists())
 
     @staticmethod
     def _bar(stock_code: str, pct_chg: float) -> StockDailyFactV1:

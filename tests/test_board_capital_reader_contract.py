@@ -32,6 +32,8 @@ class BoardCapitalReaderContractTest(unittest.TestCase):
         self.assertTrue(result.ok)
         fact = result.facts[0]
         self.assertEqual(123456789.0, fact.main_inflow)
+        self.assertEqual("CNY", fact.amount_unit)
+        self.assertEqual("CNY", fact.main_inflow_unit)
         self.assertEqual(18, fact.up_count)
         self.assertIsNone(fact.lead_stock_chg)
         self.assertFalse(hasattr(fact, "score"))
@@ -71,9 +73,16 @@ class BoardCapitalReaderContractTest(unittest.TestCase):
                     amount REAL, change_pct REAL, main_inflow REAL,
                     up_count INTEGER, down_count INTEGER,
                     lead_stock_name TEXT, lead_stock_chg REAL,
+                    amount_unit TEXT NOT NULL,
+                    main_inflow_unit TEXT NOT NULL,
                     PRIMARY KEY(trade_date, sector_code))"""
             )
             connection.execute(
-                "INSERT INTO sector_fund_flow_daily VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                ("2026-07-10", "S001", "机器人", 987654321, 2.1, 123456789, 18, 3, "测试股份", None),
+                """INSERT INTO sector_fund_flow_daily
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    "2026-07-10", "S001", "机器人", 987654321,
+                    2.1, 123456789, 18, 3, "测试股份", None,
+                    "CNY", "CNY",
+                ),
             )

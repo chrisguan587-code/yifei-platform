@@ -104,6 +104,8 @@ class CapitalPrefetchResultV1:
 class AksharePublicDataClientV1:
     """Thin adapter; imports the optional dependency only when instantiated."""
 
+    history_row_limit = 100
+
     def __init__(
         self,
         *,
@@ -257,6 +259,8 @@ class AksharePublicDataClientV1:
 
 class SinaCapitalFlowClientV1:
     """No-token Sina daily main-flow adapter with immutable per-stock cache."""
+
+    history_row_limit = 120
 
     def __init__(
         self,
@@ -497,6 +501,7 @@ def backfill_public_supplemental_v1(
     )
     if not sessions:
         raise ValueError("market database has no sessions in requested range")
+    _require_capital_window_supported(capital_client, sessions)
     all_codes = sorted(set().union(*universe.values()))
 
     capital_rows: list[tuple[object, ...]] = []
@@ -694,6 +699,7 @@ def backfill_public_capital_v1(
     )
     if not sessions:
         raise ValueError("market database has no sessions in requested range")
+    _require_capital_window_supported(capital_client, sessions)
     all_codes = sorted(set().union(*universe.values()))
     capital_rows: list[tuple[object, ...]] = []
     for stock_code in all_codes:
@@ -1316,6 +1322,21 @@ def _require_session_capital_coverage(
         raise ValueError(
             "stock capital coverage is below the frozen threshold "
             f"for latest session {session}"
+        )
+
+
+def _require_capital_window_supported(
+    capital_client: CapitalFlowClientV1,
+    sessions: tuple[str, ...],
+) -> None:
+    raw_limit = getattr(capital_client, "history_row_limit", None)
+    if raw_limit is None:
+        return
+    limit = int(raw_limit)
+    if len(sessions) > limit:
+        raise ValueError(
+            f"requested {len(sessions)} sessions exceeds capital source "
+            f"history limit {limit}"
         )
 
 

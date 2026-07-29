@@ -587,7 +587,8 @@ def _require_ready_dataset(
         ),
         "sector_membership_history": (
             """SELECT COUNT(*) FROM sector_membership_history
-               WHERE valid_from<=?
+               WHERE sector_level='L2'
+                 AND valid_from<=?
                  AND (valid_to_exclusive IS NULL OR valid_to_exclusive>?)
                  AND source_version=?""",
             (as_of, as_of, source_version),
@@ -595,7 +596,9 @@ def _require_ready_dataset(
         ),
         "sector_fund_flow_daily": (
             """SELECT COUNT(*) FROM sector_fund_flow_daily
-               WHERE trade_date=? AND source_version=?""",
+               WHERE trade_date=? AND source_version=?
+                 AND amount_unit='CNY'
+                 AND main_inflow_unit='CNY'""",
             (as_of, source_version),
             400,
         ),

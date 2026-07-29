@@ -201,6 +201,25 @@ def backfill_tushare_supplemental_v1(
         initialize_supplemental_database_v1(temporary)
         with sqlite3.connect(temporary) as connection:
             connection.execute("BEGIN")
+            conflicting_capital = next((
+                (str(row[0]), str(row[2]))
+                for row in capital_rows
+                if connection.execute(
+                    """SELECT 1 FROM stock_capital_daily
+                       WHERE stock_code=? AND trade_date=? AND source<>?
+                       LIMIT 1""",
+                    (
+                        str(row[0]),
+                        str(row[2]),
+                        "tushare.moneyflow_ths+daily_basic",
+                    ),
+                ).fetchone()
+            ), None)
+            if conflicting_capital is not None:
+                raise ValueError(
+                    "cross-source stock capital key conflict; "
+                    "publish to a separate target"
+                )
             existing_metadata = dict(connection.execute(
                 """SELECT key,value FROM supplemental_metadata
                    WHERE key IN (

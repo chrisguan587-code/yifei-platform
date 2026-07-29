@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from yifei_platform.board_capital import CapitalFactReaderV1
+from yifei_platform.market_data import ReadStatus
 from yifei_platform.sector_flow_ingestion import (
     publish_sector_flow_daily_v1,
 )
@@ -101,6 +102,30 @@ class SectorFlowIngestionTest(unittest.TestCase):
                 fetched_at="2026-07-27T15:20:00+08:00",
                 minimum_sector_count=2,
             )
+
+    def test_reader_blocks_when_monetary_unit_columns_are_missing(self) -> None:
+        legacy = self.root / "legacy-sector.db"
+        with sqlite3.connect(legacy) as connection:
+            connection.execute(
+                """CREATE TABLE sector_fund_flow_daily (
+                    trade_date TEXT, sector_code TEXT,
+                    source_version TEXT
+                )"""
+            )
+            connection.execute(
+                """INSERT INTO sector_fund_flow_daily
+                   VALUES ('2026-07-27','BK001',?)""",
+                ("levistock.eastmoney-sector-em.industry.v1",),
+            )
+        result = CapitalFactReaderV1(
+            legacy,
+            source_version="levistock.eastmoney-sector-em.industry.v1",
+        ).read_sector_daily("2026-07-27")
+        self.assertEqual(ReadStatus.BLOCKED, result.status)
+        self.assertIn(
+            "required_column_missing:amount_unit",
+            result.reason_codes,
+        )
         with self.assertRaisesRegex(ValueError, "after 15:10"):
             publish_sector_flow_daily_v1(
                 client=_FakeSectorFlowClient(),
