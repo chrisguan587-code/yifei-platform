@@ -84,7 +84,7 @@ def build_baostock_turnover_snapshot_v1(
                 float(normalized[field]),
                 float(source[field]),
                 rel_tol=1e-9,
-                abs_tol=1e-8,
+                abs_tol=1.0 if field == "amount" else 1e-8,
             ):
                 raise ValueError(
                     f"BaoStock {field} does not match market database "
@@ -172,7 +172,7 @@ def validate_baostock_turnover_snapshot_market_v1(
                 float(raw.get(field)),
                 float(source[field]),
                 rel_tol=1e-9,
-                abs_tol=1e-8,
+                abs_tol=1.0 if field == "amount" else 1e-8,
             ):
                 raise ValueError(
                     "existing turnover snapshot market-db mismatch"

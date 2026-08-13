@@ -97,6 +97,23 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
         write_turnover_snapshot_v1(payload=payload, output=self.snapshot)
         self.assertEqual(first, self.snapshot.read_bytes())
 
+    def test_accepts_amounts_rounded_to_the_nearest_yuan(self) -> None:
+        payload = build_baostock_turnover_snapshot_v1(
+            market_database_path=self.source,
+            as_of="2026-07-28",
+            fetched_at="2026-07-28T17:40:00+08:00",
+            client=_FakeBaoStockClient(amount_offset=-0.5),
+        )
+        self.assertEqual(1.0, payload["summary"]["coverage"])
+
+        with self.assertRaisesRegex(ValueError, "amount does not match"):
+            build_baostock_turnover_snapshot_v1(
+                market_database_path=self.source,
+                as_of="2026-07-28",
+                fetched_at="2026-07-28T17:40:00+08:00",
+                client=_FakeBaoStockClient(amount_offset=-1.01),
+            )
+
     def test_concurrent_different_snapshot_cannot_replace_first_writer(self) -> None:
         payload = build_baostock_turnover_snapshot_v1(
             market_database_path=self.source,
@@ -605,10 +622,12 @@ class _FakeBaoStockClient:
         *,
         volume_scale: float = 1.0,
         amount_scale: float = 1.0,
+        amount_offset: float = 0.0,
         missing: set[str] | None = None,
     ) -> None:
         self._volume_scale = volume_scale
         self._amount_scale = amount_scale
+        self._amount_offset = amount_offset
         self._missing = missing or set()
 
     def read(
@@ -624,7 +643,9 @@ class _FakeBaoStockClient:
             "trade_date": start_date,
             "close": source[0],
             "volume": str(float(source[1]) * self._volume_scale),
-            "amount": str(float(source[2]) * self._amount_scale),
+            "amount": str(
+                float(source[2]) * self._amount_scale + self._amount_offset
+            ),
             "turnover_percent": source[3],
             "volume_unit": "SHARE",
             "amount_unit": "CNY",
