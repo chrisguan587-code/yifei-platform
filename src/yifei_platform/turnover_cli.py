@@ -6,15 +6,21 @@ import os
 from pathlib import Path
 import sys
 
-from .public_data_ingestion import BaoStockDailyClientV1
+from .public_data_ingestion import (
+    BaoStockDailyClientV1,
+    EastmoneyDailyTurnoverClientV1,
+)
 from .turnover_ingestion import (
     BAOSTOCK_TURNOVER_SCHEMA_VERSION,
     BAOSTOCK_TURNOVER_SOURCE_VERSION,
+    EASTMONEY_TURNOVER_SOURCE_VERSION,
     DERIVED_TURNOVER_SOURCE_VERSION,
     build_derived_turnover_snapshot_v1,
     build_baostock_turnover_snapshot_v1,
+    build_eastmoney_turnover_snapshot_v1,
     float_share_reference_identity_v1,
     validate_baostock_turnover_snapshot_market_v1,
+    validate_eastmoney_turnover_snapshot_market_v1,
     write_turnover_snapshot_v1,
 )
 
@@ -27,6 +33,10 @@ def main() -> int:
     parser.add_argument("--as-of", required=True)
     parser.add_argument("--fetched-at", required=True)
     parser.add_argument("--float-share-reference", type=Path)
+    parser.add_argument(
+        "--exact-provider", choices=("auto", "baostock", "eastmoney"),
+        default="auto",
+    )
     parser.add_argument("--validate-existing-only", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -37,7 +47,7 @@ def main() -> int:
         expected_source_version = (
             DERIVED_TURNOVER_SOURCE_VERSION
             if args.float_share_reference
-            else BAOSTOCK_TURNOVER_SOURCE_VERSION
+            else str(payload.get("source_version") or "")
         )
         if (
             payload.get("schema_version")
@@ -72,7 +82,7 @@ def main() -> int:
                 parser.error(
                     "existing turnover snapshot market-db mismatch"
                 )
-        else:
+        elif expected_source_version == BAOSTOCK_TURNOVER_SOURCE_VERSION:
             try:
                 validate_baostock_turnover_snapshot_market_v1(
                     market_database_path=args.market_db,
@@ -80,6 +90,16 @@ def main() -> int:
                 )
             except ValueError as exc:
                 parser.error(str(exc))
+        elif expected_source_version == EASTMONEY_TURNOVER_SOURCE_VERSION:
+            try:
+                validate_eastmoney_turnover_snapshot_market_v1(
+                    market_database_path=args.market_db,
+                    payload=payload,
+                )
+            except ValueError as exc:
+                parser.error(str(exc))
+        else:
+            parser.error("existing turnover snapshot source version mismatch")
         reused = True
     else:
         if args.float_share_reference:
@@ -93,22 +113,38 @@ def main() -> int:
                 reference=reference,
             )
         else:
-            try:
-                client = BaoStockDailyClientV1(retry_attempts=3)
+            providers = (
+                ("baostock", "eastmoney")
+                if args.exact_provider == "auto" else (args.exact_provider,)
+            )
+            payload = None
+            for provider in providers:
                 try:
-                    payload = build_baostock_turnover_snapshot_v1(
-                        market_database_path=args.market_db,
-                        as_of=args.as_of,
-                        fetched_at=args.fetched_at,
-                        client=client,
+                    if provider == "baostock":
+                        client = BaoStockDailyClientV1(retry_attempts=3)
+                        builder = build_baostock_turnover_snapshot_v1
+                    else:
+                        client = EastmoneyDailyTurnoverClientV1(
+                            retry_attempts=1, timeout_seconds=5,
+                        )
+                        builder = build_eastmoney_turnover_snapshot_v1
+                    try:
+                        payload = builder(
+                            market_database_path=args.market_db,
+                            as_of=args.as_of,
+                            fetched_at=args.fetched_at,
+                            client=client,
+                            max_elapsed_seconds=420,
+                        )
+                    finally:
+                        client.close()
+                    break
+                except RuntimeError as exc:
+                    print(
+                        f"{provider} turnover unavailable: {exc}",
+                        file=sys.stderr,
                     )
-                finally:
-                    client.close()
-            except RuntimeError as exc:
-                print(
-                    f"exact-date BaoStock turnover unavailable: {exc}",
-                    file=sys.stderr,
-                )
+            if payload is None:
                 return os.EX_TEMPFAIL
         write_turnover_snapshot_v1(
             payload=payload,

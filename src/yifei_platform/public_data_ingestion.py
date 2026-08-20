@@ -441,6 +441,84 @@ class BaoStockDailyClientV1:
             self._closed = True
 
 
+class EastmoneyDailyTurnoverClientV1:
+    """Read unadjusted daily turnover from Eastmoney's standard K-line API."""
+
+    def __init__(
+        self, *, retry_attempts: int = 1, timeout_seconds: float = 5.0,
+    ) -> None:
+        if retry_attempts < 1:
+            raise ValueError("retry_attempts must be positive")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        self._retry_attempts = retry_attempts
+        self._timeout_seconds = timeout_seconds
+
+    def read(
+        self, stock_code: str, start_date: str, end_date: str,
+    ) -> tuple[dict[str, object], ...]:
+        market = "1" if stock_code.startswith(("60", "68")) else "0"
+        params = {
+            "secid": f"{market}.{stock_code}",
+            "klt": "101",
+            "fqt": "0",
+            "lmt": "1",
+            "end": "20500101",
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+            "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+        }
+        request = Request(
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get?"
+            + urlencode(params),
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://quote.eastmoney.com/",
+            },
+        )
+
+        def fetch() -> object:
+            try:
+                response = urlopen(request, timeout=self._timeout_seconds)
+            except (HTTPError, HTTPException, URLError):
+                response = build_opener(ProxyHandler({})).open(
+                    request, timeout=self._timeout_seconds
+                )
+            with response:
+                return json.loads(response.read().decode("utf-8"))
+
+        payload = _retry(
+            fetch,
+            attempts=self._retry_attempts,
+            label=f"Eastmoney daily turnover {stock_code}",
+        )
+        if not isinstance(payload, dict) or payload.get("rc") != 0:
+            raise RuntimeError(f"Eastmoney daily query failed for {stock_code}")
+        data = payload.get("data")
+        klines = data.get("klines") if isinstance(data, dict) else None
+        if not isinstance(klines, list):
+            raise RuntimeError(f"Eastmoney daily response invalid for {stock_code}")
+        rows = []
+        for raw in klines:
+            fields = str(raw).split(",")
+            if len(fields) != 11:
+                raise RuntimeError(f"Eastmoney daily row invalid for {stock_code}")
+            rows.append({
+                "trade_date": fields[0],
+                "close": fields[2],
+                "volume": str(float(fields[5]) * 100.0),
+                "amount": fields[6],
+                "turnover_percent": fields[10],
+                "volume_unit": "SHARE",
+                "amount_unit": "CNY",
+                "turnover_unit": "PERCENT",
+            })
+        return tuple(rows)
+
+    def close(self) -> None:
+        return None
+
+
 def prepare_public_cache_v1(
     *,
     cache_dir: Path,

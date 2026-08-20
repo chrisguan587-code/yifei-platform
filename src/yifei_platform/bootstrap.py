@@ -68,6 +68,7 @@ def publish_transitional_daily_market_data(
     readiness_root: Path,
     as_of: str,
     published_at: str,
+    turnover_reason_code: str | None = None,
 ) -> BootstrapResult:
     """Temporary V3-to-Platform bridge; retire after Platform owns ingestion."""
     expected_as_of = date.fromisoformat(as_of).isoformat()
@@ -123,20 +124,31 @@ def publish_transitional_daily_market_data(
                 readiness_root=readiness_root,
                 health=health,
                 as_of=expected_as_of,
+                turnover_reason_code=turnover_reason_code,
             )
         os.replace(temporary, target)
+        datasets = [DatasetQualityV1(
+            dataset="stock_daily",
+            status=QualityStatus.OK,
+            observed_as_of=expected_as_of,
+            source_version=database_sha256,
+            coverage=1.0,
+            freshness_lag_sessions=0,
+        )]
+        if turnover_reason_code is not None:
+            datasets.append(DatasetQualityV1(
+                dataset="turnover",
+                status=QualityStatus.DEGRADED,
+                observed_as_of=None,
+                source_version="turnover-unavailable.v1",
+                coverage=0.0,
+                reason_codes=(turnover_reason_code,),
+            ))
         snapshot = DataQualitySnapshotV1.create(
             as_of=expected_as_of,
             observed_at=published_at,
             producer_version=TRANSITIONAL_DAILY_VERSION,
-            datasets=(DatasetQualityV1(
-                dataset="stock_daily",
-                status=QualityStatus.OK,
-                observed_as_of=expected_as_of,
-                source_version=database_sha256,
-                coverage=1.0,
-                freshness_lag_sessions=0,
-            ),),
+            datasets=datasets,
         )
         marker = ReadinessStoreV1(readiness_root).publish_ready(
             bundle="v4-market-core",
@@ -501,6 +513,7 @@ def _republish_existing_daily_target(
     as_of: str,
     producer_version: str = TRANSITIONAL_DAILY_VERSION,
     coverage: float = 1.0,
+    turnover_reason_code: str | None = None,
 ) -> BootstrapResult:
     metadata = load_market_metadata(target)
     if metadata["producer_version"] != producer_version:
@@ -519,18 +532,28 @@ def _republish_existing_daily_target(
         raise ValueError("existing same-day target does not match source health")
     database_sha256 = _sha256(target)
     published_at = metadata["published_at"]
+    datasets = [DatasetQualityV1(
+        dataset="stock_daily",
+        status=QualityStatus.OK,
+        observed_as_of=as_of,
+        source_version=database_sha256,
+        coverage=coverage,
+        freshness_lag_sessions=0,
+    )]
+    if turnover_reason_code is not None:
+        datasets.append(DatasetQualityV1(
+            dataset="turnover",
+            status=QualityStatus.DEGRADED,
+            observed_as_of=None,
+            source_version="turnover-unavailable.v1",
+            coverage=0.0,
+            reason_codes=(turnover_reason_code,),
+        ))
     snapshot = DataQualitySnapshotV1.create(
         as_of=as_of,
         observed_at=published_at,
         producer_version=producer_version,
-        datasets=(DatasetQualityV1(
-            dataset="stock_daily",
-            status=QualityStatus.OK,
-            observed_as_of=as_of,
-            source_version=database_sha256,
-            coverage=coverage,
-            freshness_lag_sessions=0,
-        ),),
+        datasets=datasets,
     )
     marker = ReadinessStoreV1(readiness_root).publish_ready(
         bundle="v4-market-core",
@@ -562,6 +585,7 @@ def _load_turnover_snapshot(path: Path, as_of: str) -> dict[str, object]:
             raise ValueError(f"turnover snapshot {key} mismatch")
     allowed_sources = {
         ("baostock.daily", "baostock-daily-turnover.v1"),
+        ("eastmoney.kline", "eastmoney-kline-daily-turnover.v1"),
         (
             "baostock.float-shares-derived",
             "baostock-float-share-derived-turnover.v1",

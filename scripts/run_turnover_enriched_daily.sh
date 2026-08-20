@@ -21,6 +21,33 @@ if [ ! -f "$HEALTH_ARTIFACT" ]; then
 fi
 FETCHED_AT="$(date -u '+%Y-%m-%dT%H:%M:%S+00:00')"
 SNAPSHOT_CLI="$(dirname "$0")/../.venv/bin/yifei-platform-turnover-snapshot"
+PYTHON_BIN="$(dirname "$0")/../.venv/bin/python"
+
+run_with_timeout() {
+  timeout_seconds="$1"
+  shift
+  "$PYTHON_BIN" - "$timeout_seconds" "$@" <<'PY'
+import subprocess
+import sys
+import os
+
+timeout_seconds = float(sys.argv[1])
+environment = os.environ.copy()
+for name in (
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "all_proxy",
+):
+    environment.pop(name, None)
+try:
+    result = subprocess.run(
+        sys.argv[2:], check=False, timeout=timeout_seconds, env=environment,
+    )
+except subprocess.TimeoutExpired:
+    print(f"turnover provider timed out after {int(timeout_seconds)} seconds", file=sys.stderr)
+    raise SystemExit(75)
+raise SystemExit(result.returncode)
+PY
+}
 
 validate_existing_snapshot() {
   source_version="$(
@@ -30,6 +57,14 @@ validate_existing_snapshot() {
   )"
   case "$source_version" in
     baostock-daily-turnover.v1)
+      "$SNAPSHOT_CLI" \
+        --market-db "$SOURCE_DB" \
+        --as-of "$AS_OF" \
+        --fetched-at "$FETCHED_AT" \
+        --validate-existing-only \
+        --output "$TURNOVER_SNAPSHOT" >/dev/null
+      ;;
+    eastmoney-kline-daily-turnover.v1)
       "$SNAPSHOT_CLI" \
         --market-db "$SOURCE_DB" \
         --as-of "$AS_OF" \
@@ -57,40 +92,52 @@ if [ -f "$TURNOVER_SNAPSHOT" ]; then
   validate_existing_snapshot
   echo "reusing validated immutable turnover snapshot: $TURNOVER_SNAPSHOT"
 else
-  if env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-    -u http_proxy -u https_proxy -u all_proxy \
-    "$SNAPSHOT_CLI" \
+  if run_with_timeout 300 "$SNAPSHOT_CLI" \
       --market-db "$SOURCE_DB" \
       --as-of "$AS_OF" \
       --fetched-at "$FETCHED_AT" \
+      --exact-provider baostock \
       --output "$TURNOVER_SNAPSHOT"; then
     :
   else
-    status="$?"
     if [ -f "$TURNOVER_SNAPSHOT" ]; then
       validate_existing_snapshot
       echo "reusing validated snapshot created by a concurrent runner"
-    elif [ "$status" -ne 75 ]; then
-      echo "exact-date turnover failed with non-fallback status: $status" >&2
-      exit "$status"
     else
-      echo "warning: exact-date BaoStock unavailable; using bounded reference" >&2
-      if env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-        -u http_proxy -u https_proxy -u all_proxy \
-        "$SNAPSHOT_CLI" \
-        --market-db "$SOURCE_DB" \
-        --as-of "$AS_OF" \
-        --fetched-at "$FETCHED_AT" \
-        --float-share-reference "$FLOAT_SHARE_REFERENCE" \
-        --output "$TURNOVER_SNAPSHOT"; then
+      echo "warning: BaoStock turnover unavailable or invalid; trying Eastmoney" >&2
+      if run_with_timeout 300 "$SNAPSHOT_CLI" \
+          --market-db "$SOURCE_DB" \
+          --as-of "$AS_OF" \
+          --fetched-at "$FETCHED_AT" \
+          --exact-provider eastmoney \
+          --output "$TURNOVER_SNAPSHOT"; then
         :
       else
-        fallback_status="$?"
-        if [ -f "$TURNOVER_SNAPSHOT" ]; then
-          validate_existing_snapshot
-          echo "reusing validated fallback snapshot created by a concurrent runner"
+        echo "warning: Eastmoney turnover unavailable or invalid; using bounded reference" >&2
+        if env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+          -u http_proxy -u https_proxy -u all_proxy \
+          "$SNAPSHOT_CLI" \
+          --market-db "$SOURCE_DB" \
+          --as-of "$AS_OF" \
+          --fetched-at "$FETCHED_AT" \
+          --float-share-reference "$FLOAT_SHARE_REFERENCE" \
+          --output "$TURNOVER_SNAPSHOT"; then
+          :
         else
-          exit "$fallback_status"
+          if [ -f "$TURNOVER_SNAPSHOT" ]; then
+            validate_existing_snapshot
+            echo "reusing validated fallback snapshot created by a concurrent runner"
+          else
+            PUBLISHED_AT="$(date -u '+%Y-%m-%dT%H:%M:%S+00:00')"
+            exec "$(dirname "$0")/../.venv/bin/yifei-platform-publish-transitional" \
+              --source-db "$SOURCE_DB" \
+              --source-health "$HEALTH_ARTIFACT" \
+              --target-db "$TARGET_DB" \
+              --readiness-root "$READINESS_ROOT" \
+              --as-of "$AS_OF" \
+              --published-at "$PUBLISHED_AT" \
+              --turnover-reason-code turnover_sources_unavailable
+          fi
         fi
       fi
     fi

@@ -13,13 +13,17 @@ from yifei_platform.public_data_ingestion import BaoStockDailyClientV1
 from yifei_platform.bootstrap import (
     TURNOVER_ENRICHED_DAILY_VERSION,
     load_market_metadata,
+    publish_transitional_daily_market_data,
     publish_turnover_enriched_daily_market_data,
 )
+from yifei_platform.readiness import ReadinessStoreV1
 from yifei_platform.turnover_ingestion import (
     BAOSTOCK_TURNOVER_SOURCE_VERSION,
+    EASTMONEY_TURNOVER_SOURCE_VERSION,
     build_derived_turnover_snapshot_v1,
     build_float_share_reference_v1,
     build_baostock_turnover_snapshot_v1,
+    build_eastmoney_turnover_snapshot_v1,
     write_turnover_snapshot_v1,
 )
 from yifei_platform.turnover_cli import main as turnover_cli_main
@@ -114,6 +118,38 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
                 client=_FakeBaoStockClient(amount_offset=-1.01),
             )
 
+    def test_builds_eastmoney_snapshot_with_the_same_market_cross_checks(self) -> None:
+        payload = build_eastmoney_turnover_snapshot_v1(
+            market_database_path=self.source,
+            as_of="2026-07-28",
+            fetched_at="2026-07-28T17:40:00+08:00",
+            client=_FakeBaoStockClient(),
+        )
+
+        self.assertEqual("eastmoney.kline", payload["source"])
+        self.assertEqual(
+            EASTMONEY_TURNOVER_SOURCE_VERSION,
+            payload["source_version"],
+        )
+        self.assertEqual(1.0, payload["summary"]["coverage"])
+
+    def test_eastmoney_allows_one_lot_volume_rounding_only(self) -> None:
+        payload = build_eastmoney_turnover_snapshot_v1(
+            market_database_path=self.source,
+            as_of="2026-07-28",
+            fetched_at="2026-07-28T17:40:00+08:00",
+            client=_FakeBaoStockClient(volume_offset=-99),
+        )
+        self.assertEqual(1.0, payload["summary"]["coverage"])
+
+        with self.assertRaisesRegex(ValueError, "volume does not match"):
+            build_eastmoney_turnover_snapshot_v1(
+                market_database_path=self.source,
+                as_of="2026-07-28",
+                fetched_at="2026-07-28T17:40:00+08:00",
+                client=_FakeBaoStockClient(volume_offset=-100),
+            )
+
     def test_concurrent_different_snapshot_cannot_replace_first_writer(self) -> None:
         payload = build_baostock_turnover_snapshot_v1(
             market_database_path=self.source,
@@ -184,6 +220,30 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
         ):
             turnover_cli_main()
         self.assertEqual(2, raised.exception.code)
+
+    def test_cli_uses_eastmoney_when_baostock_is_unavailable(self) -> None:
+        argv = [
+            "turnover",
+            "--market-db", str(self.source),
+            "--as-of", "2026-07-28",
+            "--fetched-at", "2026-07-28T17:40:00+08:00",
+            "--output", str(self.snapshot),
+        ]
+        with (
+            patch.object(sys, "argv", argv),
+            patch(
+                "yifei_platform.turnover_cli.BaoStockDailyClientV1",
+                side_effect=RuntimeError("network unavailable"),
+            ),
+            patch(
+                "yifei_platform.turnover_cli.EastmoneyDailyTurnoverClientV1",
+                return_value=_FakeBaoStockClient(),
+            ),
+        ):
+            self.assertEqual(0, turnover_cli_main())
+
+        payload = json.loads(self.snapshot.read_text(encoding="utf-8"))
+        self.assertEqual("eastmoney.kline", payload["source"])
 
     def test_existing_exact_snapshot_rejects_changed_market_database(
         self,
@@ -463,6 +523,45 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
         self.assertEqual("CNY", metadata["stock_daily_amount_unit"])
         self.assertEqual("1.0", metadata["turnover_coverage"])
 
+    def test_core_market_data_remains_ready_when_turnover_is_unavailable(self) -> None:
+        result = publish_transitional_daily_market_data(
+            source_path=self.source,
+            source_health_path=self.health,
+            target_path=self.target,
+            readiness_root=self.readiness,
+            as_of="2026-07-28",
+            published_at="2026-07-28T17:45:00+08:00",
+            turnover_reason_code="turnover_sources_unavailable",
+        )
+
+        marker = ReadinessStoreV1(self.readiness).read_ready(
+            bundle="v4-market-core", as_of="2026-07-28",
+        )
+        self.assertEqual(result.readiness_marker, marker)
+        snapshot = json.loads(
+            (self.readiness / marker.quality_snapshot_ref).read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            {
+                "dataset": "turnover",
+                "status": "degraded",
+                "observed_as_of": None,
+                "source_version": "turnover-unavailable.v1",
+                "coverage": 0.0,
+                "freshness_lag_sessions": None,
+                "reason_codes": ["turnover_sources_unavailable"],
+            },
+            next(item for item in snapshot["datasets"] if item["dataset"] == "turnover"),
+        )
+        with sqlite3.connect(self.target) as connection:
+            turnover = connection.execute(
+                """SELECT turnover FROM stock_daily
+                   WHERE stock_code='000001' AND trade_date='2026-07-28'"""
+            ).fetchone()[0]
+        self.assertIsNone(turnover)
+
     def test_rejects_lot_share_mismatch_without_replacing_target(self) -> None:
         with sqlite3.connect(self.target) as connection:
             connection.executescript("""
@@ -621,11 +720,13 @@ class _FakeBaoStockClient:
         self,
         *,
         volume_scale: float = 1.0,
+        volume_offset: float = 0.0,
         amount_scale: float = 1.0,
         amount_offset: float = 0.0,
         missing: set[str] | None = None,
     ) -> None:
         self._volume_scale = volume_scale
+        self._volume_offset = volume_offset
         self._amount_scale = amount_scale
         self._amount_offset = amount_offset
         self._missing = missing or set()
@@ -642,7 +743,9 @@ class _FakeBaoStockClient:
         return ({
             "trade_date": start_date,
             "close": source[0],
-            "volume": str(float(source[1]) * self._volume_scale),
+            "volume": str(
+                float(source[1]) * self._volume_scale + self._volume_offset
+            ),
             "amount": str(
                 float(source[2]) * self._amount_scale + self._amount_offset
             ),
@@ -651,6 +754,9 @@ class _FakeBaoStockClient:
             "amount_unit": "CNY",
             "turnover_unit": "PERCENT",
         },)
+
+    def close(self) -> None:
+        return None
 
 
 def _login_result(attempts: list[int]):

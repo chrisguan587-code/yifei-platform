@@ -15,6 +15,7 @@ def main() -> int:
     parser.add_argument("--readiness-root", type=Path, required=True)
     parser.add_argument("--as-of", required=True)
     parser.add_argument("--published-at", required=True)
+    parser.add_argument("--turnover-reason-code")
     args = parser.parse_args()
     result = publish_transitional_daily_market_data(
         source_path=args.source_db,
@@ -23,6 +24,7 @@ def main() -> int:
         readiness_root=args.readiness_root,
         as_of=args.as_of,
         published_at=args.published_at,
+        turnover_reason_code=args.turnover_reason_code,
     )
     print(json.dumps({
         "as_of": result.as_of,

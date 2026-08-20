@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import math
@@ -8,11 +9,13 @@ import os
 from pathlib import Path
 import sqlite3
 import tempfile
+import time
 from typing import Protocol
 
 
 BAOSTOCK_TURNOVER_SCHEMA_VERSION = "baostock-turnover-snapshot.v1"
 BAOSTOCK_TURNOVER_SOURCE_VERSION = "baostock-daily-turnover.v1"
+EASTMONEY_TURNOVER_SOURCE_VERSION = "eastmoney-kline-daily-turnover.v1"
 FLOAT_SHARE_REFERENCE_SCHEMA_VERSION = "baostock-float-share-reference.v1"
 DERIVED_TURNOVER_SOURCE_VERSION = "baostock-float-share-derived-turnover.v1"
 FLOAT_SHARE_REFERENCE_MAX_AGE_SESSIONS = 20
@@ -34,7 +37,55 @@ def build_baostock_turnover_snapshot_v1(
     as_of: str,
     fetched_at: str,
     client: BaoStockTurnoverClientV1,
+    max_elapsed_seconds: float | None = None,
 ) -> dict[str, object]:
+    return _build_exact_turnover_snapshot_v1(
+        market_database_path=market_database_path,
+        as_of=as_of,
+        fetched_at=fetched_at,
+        client=client,
+        provider="baostock.daily",
+        source_version=BAOSTOCK_TURNOVER_SOURCE_VERSION,
+        max_elapsed_seconds=max_elapsed_seconds,
+        parallel_workers=1,
+    )
+
+
+def build_eastmoney_turnover_snapshot_v1(
+    *,
+    market_database_path: Path,
+    as_of: str,
+    fetched_at: str,
+    client: BaoStockTurnoverClientV1,
+    max_elapsed_seconds: float | None = None,
+) -> dict[str, object]:
+    return _build_exact_turnover_snapshot_v1(
+        market_database_path=market_database_path,
+        as_of=as_of,
+        fetched_at=fetched_at,
+        client=client,
+        provider="eastmoney.kline",
+        source_version=EASTMONEY_TURNOVER_SOURCE_VERSION,
+        max_elapsed_seconds=max_elapsed_seconds,
+        parallel_workers=12,
+    )
+
+
+def _build_exact_turnover_snapshot_v1(
+    *,
+    market_database_path: Path,
+    as_of: str,
+    fetched_at: str,
+    client: BaoStockTurnoverClientV1,
+    provider: str,
+    source_version: str,
+    max_elapsed_seconds: float | None,
+    parallel_workers: int,
+) -> dict[str, object]:
+    if max_elapsed_seconds is not None and max_elapsed_seconds <= 0:
+        raise ValueError("max_elapsed_seconds must be positive")
+    if parallel_workers < 1:
+        raise ValueError("parallel_workers must be positive")
     requested = date.fromisoformat(as_of).isoformat()
     timestamp = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
     if timestamp.utcoffset() is None:
@@ -51,30 +102,31 @@ def build_baostock_turnover_snapshot_v1(
         and _positive(row["volume"])
         and _positive(row["amount"])
     )
-    rows = []
-    missing = []
-    for source in eligible:
-        stock_code = str(source["stock_code"])
+    rows: list[dict[str, object]] = []
+    missing: list[str] = []
+    deadline = (
+        time.monotonic() + max_elapsed_seconds
+        if max_elapsed_seconds is not None else None
+    )
+    def collect(source_row: dict[str, object]) -> dict[str, object] | None:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"{provider} turnover exceeded its collection time budget"
+            )
+        stock_code = str(source_row["stock_code"])
         try:
             raw_rows = client.read(stock_code, requested, requested)
         except RuntimeError:
-            missing.append(stock_code)
-            if len(missing) / len(eligible) > 0.01:
-                raise RuntimeError(
-                    "BaoStock failures already exceed the frozen 99% "
-                    "coverage gate"
-                )
-            continue
+            return stock_code
         matching = tuple(
             row for row in raw_rows
             if str(row.get("trade_date") or "") == requested
         )
         if not matching:
-            missing.append(stock_code)
-            continue
+            return None
         if len(matching) != 1:
             raise ValueError(
-                f"BaoStock returned duplicate exact-date rows for {stock_code}"
+                f"{provider} returned duplicate exact-date rows for {stock_code}"
             )
         normalized = _normalize_row(
             stock_code=stock_code, row=matching[0]
@@ -82,21 +134,60 @@ def build_baostock_turnover_snapshot_v1(
         for field in ("close", "volume", "amount"):
             if not math.isclose(
                 float(normalized[field]),
-                float(source[field]),
+                float(source_row[field]),
                 rel_tol=1e-9,
-                abs_tol=1.0 if field == "amount" else 1e-8,
+                abs_tol=_market_cross_check_tolerance(
+                    provider=provider, field=field,
+                ),
             ):
                 raise ValueError(
-                    f"BaoStock {field} does not match market database "
+                    f"{provider} {field} does not match market database "
                     f"for {stock_code}"
                 )
-        rows.append(normalized)
+        return normalized
+
+    if parallel_workers == 1:
+        collected = (collect(source_row) for source_row in eligible)
+        for source_row, normalized in zip(eligible, collected, strict=True):
+            if isinstance(normalized, str):
+                missing.append(str(source_row["stock_code"]))
+                if len(missing) / len(eligible) > 0.01:
+                    raise RuntimeError(
+                        f"{provider} failures already exceed the frozen 99% "
+                        "coverage gate"
+                    )
+            elif normalized is not None:
+                rows.append(normalized)
+            else:
+                missing.append(str(source_row["stock_code"]))
+    else:
+        executor = ThreadPoolExecutor(max_workers=parallel_workers)
+        futures = {
+            executor.submit(collect, source_row): source_row for source_row in eligible
+        }
+        try:
+            for future in as_completed(futures):
+                source_row = futures[future]
+                normalized = future.result()
+                if isinstance(normalized, str):
+                    missing.append(str(source_row["stock_code"]))
+                    if len(missing) / len(eligible) > 0.01:
+                        raise RuntimeError(
+                            f"{provider} failures already exceed the frozen 99% "
+                            "coverage gate"
+                        )
+                elif normalized is not None:
+                    rows.append(normalized)
+                else:
+                    missing.append(str(source_row["stock_code"]))
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
     coverage = len(rows) / len(eligible) if eligible else 0.0
     _require_coverage(coverage)
     return {
         "schema_version": BAOSTOCK_TURNOVER_SCHEMA_VERSION,
-        "source": "baostock.daily",
-        "source_version": BAOSTOCK_TURNOVER_SOURCE_VERSION,
+        "source": provider,
+        "source_version": source_version,
         "as_of": requested,
         "fetched_at": fetched_at,
         "units": {
@@ -120,12 +211,38 @@ def validate_baostock_turnover_snapshot_market_v1(
     market_database_path: Path,
     payload: dict[str, object],
 ) -> None:
+    _validate_exact_turnover_snapshot_market_v1(
+        market_database_path=market_database_path,
+        payload=payload,
+        source="baostock.daily",
+        source_version=BAOSTOCK_TURNOVER_SOURCE_VERSION,
+    )
+
+
+def validate_eastmoney_turnover_snapshot_market_v1(
+    *, market_database_path: Path, payload: dict[str, object],
+) -> None:
+    _validate_exact_turnover_snapshot_market_v1(
+        market_database_path=market_database_path,
+        payload=payload,
+        source="eastmoney.kline",
+        source_version=EASTMONEY_TURNOVER_SOURCE_VERSION,
+    )
+
+
+def _validate_exact_turnover_snapshot_market_v1(
+    *,
+    market_database_path: Path,
+    payload: dict[str, object],
+    source: str,
+    source_version: str,
+) -> None:
     requested = date.fromisoformat(str(payload.get("as_of"))).isoformat()
     if payload.get("schema_version") != BAOSTOCK_TURNOVER_SCHEMA_VERSION:
         raise ValueError("existing turnover snapshot schema mismatch")
-    if payload.get("source") != "baostock.daily":
+    if payload.get("source") != source:
         raise ValueError("existing turnover snapshot source mismatch")
-    if payload.get("source_version") != BAOSTOCK_TURNOVER_SOURCE_VERSION:
+    if payload.get("source_version") != source_version:
         raise ValueError(
             "existing turnover snapshot source version mismatch"
         )
@@ -172,7 +289,9 @@ def validate_baostock_turnover_snapshot_market_v1(
                 float(raw.get(field)),
                 float(source[field]),
                 rel_tol=1e-9,
-                abs_tol=1.0 if field == "amount" else 1e-8,
+                abs_tol=_market_cross_check_tolerance(
+                    provider=payload.get("source"), field=field,
+                ),
             ):
                 raise ValueError(
                     "existing turnover snapshot market-db mismatch"
@@ -192,6 +311,16 @@ def validate_baostock_turnover_snapshot_market_v1(
     }:
         raise ValueError("existing turnover snapshot summary mismatch")
     _require_coverage(coverage)
+
+
+def _market_cross_check_tolerance(*, provider: object, field: str) -> float:
+    if field == "amount":
+        return 1.0
+    if field == "volume" and provider == "eastmoney.kline":
+        # Eastmoney's daily K-line volume is whole lots; the market database
+        # records shares and can retain an odd-lot remainder from its source.
+        return 99.0
+    return 1e-8
 
 
 def build_float_share_reference_v1(
