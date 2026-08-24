@@ -100,6 +100,7 @@ class BootstrapMarketDataTest(unittest.TestCase):
             "stock_daily_rows": 1,
             "status": "success",
             "final_gate": "ok",
+            "blocking": False,
         }), encoding="utf-8")
 
         result = publish_transitional_daily_market_data(
@@ -140,6 +141,7 @@ class BootstrapMarketDataTest(unittest.TestCase):
             "stock_daily_rows": 1,
             "status": "failed",
             "final_gate": "hard_fail",
+            "blocking": True,
         }), encoding="utf-8")
         with self.assertRaises(ValueError):
             publish_transitional_daily_market_data(
@@ -154,6 +156,60 @@ class BootstrapMarketDataTest(unittest.TestCase):
         self.assertIsNone(ReadinessStoreV1(self.readiness).read_ready(
             bundle="v4-market-core", as_of="2026-07-13"
         ))
+
+    def test_transitional_daily_accepts_non_blocking_index_degradation(self) -> None:
+        self._publish()
+        with sqlite3.connect(self.source) as connection:
+            connection.execute(
+                "INSERT INTO stock_daily VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("000001", "A", "2026-07-13", 1, 1, 1, 1, 1, 10, 300, 0, 1, 0),
+            )
+        health = self.root / "health.json"
+        health.write_text(json.dumps({
+            "trade_date": "2026-07-13",
+            "stock_daily_date": "2026-07-13",
+            "stock_daily_rows": 1,
+            "status": "degraded",
+            "final_gate": "degraded",
+            "blocking": False,
+            "db_state": "index_stale",
+        }), encoding="utf-8")
+
+        result = publish_transitional_daily_market_data(
+            source_path=self.source,
+            source_health_path=health,
+            target_path=self.target,
+            readiness_root=self.readiness,
+            as_of="2026-07-13",
+            published_at="2026-07-13T17:45:00+08:00",
+        )
+
+        self.assertEqual("2026-07-13", result.as_of)
+        self.assertIsNotNone(ReadinessStoreV1(self.readiness).read_ready(
+            bundle="v4-market-core", as_of="2026-07-13"
+        ))
+
+    def test_transitional_daily_rejects_degraded_blocking_health(self) -> None:
+        self._publish()
+        health = self.root / "health.json"
+        health.write_text(json.dumps({
+            "trade_date": "2026-07-13",
+            "stock_daily_date": "2026-07-13",
+            "stock_daily_rows": 1,
+            "status": "degraded",
+            "final_gate": "degraded",
+            "blocking": True,
+        }), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "not ready"):
+            publish_transitional_daily_market_data(
+                source_path=self.source,
+                source_health_path=health,
+                target_path=self.target,
+                readiness_root=self.readiness,
+                as_of="2026-07-13",
+                published_at="2026-07-13T17:45:00+08:00",
+            )
 
     def test_transitional_same_day_retry_rejects_changed_source_content(self) -> None:
         self.test_transitional_daily_requires_health_and_atomically_advances_date()

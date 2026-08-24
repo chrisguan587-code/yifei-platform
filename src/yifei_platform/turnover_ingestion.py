@@ -21,6 +21,7 @@ DERIVED_TURNOVER_SOURCE_VERSION = "baostock-float-share-derived-turnover.v1"
 FLOAT_SHARE_REFERENCE_MAX_AGE_SESSIONS = 20
 TURNOVER_COVERAGE_MINIMUM = 0.99
 FLOAT_SHARE_REFERENCE_SOURCE_VERSIONS = frozenset({
+    BAOSTOCK_TURNOVER_SOURCE_VERSION,
     "sina-moneyflow-r0+baostock-daily.v2",
 })
 
@@ -407,6 +408,65 @@ def build_float_share_reference_v1(
         "schema_version": FLOAT_SHARE_REFERENCE_SCHEMA_VERSION,
         "source": "baostock.daily",
         "source_version": source_version,
+        "as_of": requested,
+        "created_at": created_at,
+        "units": {"float_shares": "SHARE"},
+        "row_count": len(reference_rows),
+        "rows": reference_rows,
+    }
+
+
+def build_float_share_reference_from_turnover_snapshot_v1(
+    *,
+    market_database_path: Path,
+    snapshot: dict[str, object],
+    created_at: str,
+) -> dict[str, object]:
+    """Derive a reusable float-share reference from an exact BaoStock snapshot."""
+    validate_baostock_turnover_snapshot_market_v1(
+        market_database_path=market_database_path,
+        payload=snapshot,
+    )
+    requested = date.fromisoformat(str(snapshot.get("as_of"))).isoformat()
+    timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    if timestamp.utcoffset() is None:
+        raise ValueError("created_at must include a timezone")
+    if requested > timestamp.date().isoformat():
+        raise ValueError("float-share reference as_of cannot be after created_at")
+    raw_rows = snapshot.get("rows")
+    if not isinstance(raw_rows, list):
+        raise ValueError("turnover snapshot rows are missing")
+    reference_rows = []
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            raise ValueError("turnover snapshot row must be an object")
+        code = str(row.get("stock_code") or "")
+        volume = _finite_non_negative(row.get("volume"), "volume", code)
+        turnover = _finite_non_negative(
+            row.get("turnover_percent"), "turnover_percent", code
+        )
+        if turnover <= 0:
+            continue
+        float_shares = volume / (turnover / 100.0)
+        if not 1_000_000 <= float_shares <= 1_000_000_000_000:
+            raise ValueError(
+                f"implausible float shares for {code}: {float_shares:.6g}"
+            )
+        reference_rows.append({
+            "stock_code": code,
+            "reference_date": requested,
+            "float_shares": float_shares,
+        })
+    summary = snapshot.get("summary")
+    if not isinstance(summary, dict):
+        raise ValueError("turnover snapshot summary is missing")
+    eligible_count = int(summary.get("eligible_row_count") or 0)
+    coverage = len(reference_rows) / eligible_count if eligible_count else 0.0
+    _require_coverage(coverage)
+    return {
+        "schema_version": FLOAT_SHARE_REFERENCE_SCHEMA_VERSION,
+        "source": "baostock.daily",
+        "source_version": BAOSTOCK_TURNOVER_SOURCE_VERSION,
         "as_of": requested,
         "created_at": created_at,
         "units": {"float_shares": "SHARE"},

@@ -488,7 +488,13 @@ def _validate_source_health(path: Path, as_of: str) -> dict[str, object]:
         raise ValueError("source health artifact must be an object")
     if payload.get("trade_date") != as_of or payload.get("stock_daily_date") != as_of:
         raise ValueError("source health artifact date does not match as_of")
-    if payload.get("status") != "success" or payload.get("final_gate") != "ok":
+    accepted_states = {
+        ("success", "ok"),
+        ("recovered", "ok"),
+        ("degraded", "degraded"),
+    }
+    state = (payload.get("status"), payload.get("final_gate"))
+    if payload.get("blocking") is not False or state not in accepted_states:
         raise ValueError("source health artifact is not ready")
     rows = payload.get("stock_daily_rows")
     if type(rows) is not int or rows <= 0:

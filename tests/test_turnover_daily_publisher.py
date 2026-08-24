@@ -21,6 +21,7 @@ from yifei_platform.turnover_ingestion import (
     BAOSTOCK_TURNOVER_SOURCE_VERSION,
     EASTMONEY_TURNOVER_SOURCE_VERSION,
     build_derived_turnover_snapshot_v1,
+    build_float_share_reference_from_turnover_snapshot_v1,
     build_float_share_reference_v1,
     build_baostock_turnover_snapshot_v1,
     build_eastmoney_turnover_snapshot_v1,
@@ -78,6 +79,7 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
             "stock_daily_rows": 2,
             "status": "success",
             "final_gate": "ok",
+            "blocking": False,
         }), encoding="utf-8")
 
     def tearDown(self) -> None:
@@ -295,6 +297,34 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
         }
         self.assertEqual(0.01, values["000001"])
         self.assertEqual(0.02, values["600000"])
+
+    def test_exact_baostock_snapshot_renews_float_share_reference(self) -> None:
+        snapshot = build_baostock_turnover_snapshot_v1(
+            market_database_path=self.source,
+            as_of="2026-07-28",
+            fetched_at="2026-07-28T17:40:00+08:00",
+            client=_FakeBaoStockClient(turnover_scale=0.01),
+        )
+
+        reference = build_float_share_reference_from_turnover_snapshot_v1(
+            market_database_path=self.source,
+            snapshot=snapshot,
+            created_at="2026-07-28T17:40:00+08:00",
+        )
+        derived = build_derived_turnover_snapshot_v1(
+            market_database_path=self.source,
+            as_of="2026-07-28",
+            fetched_at="2026-07-28T17:41:00+08:00",
+            reference=reference,
+        )
+
+        self.assertEqual("2026-07-28", reference["as_of"])
+        self.assertEqual(
+            BAOSTOCK_TURNOVER_SOURCE_VERSION,
+            reference["source_version"],
+        )
+        self.assertEqual(2, reference["row_count"])
+        self.assertEqual(1.0, derived["summary"]["coverage"])
 
     def test_existing_derived_snapshot_rejects_changed_reference(self) -> None:
         reference = build_float_share_reference_v1(
@@ -723,12 +753,14 @@ class _FakeBaoStockClient:
         volume_offset: float = 0.0,
         amount_scale: float = 1.0,
         amount_offset: float = 0.0,
+        turnover_scale: float = 1.0,
         missing: set[str] | None = None,
     ) -> None:
         self._volume_scale = volume_scale
         self._volume_offset = volume_offset
         self._amount_scale = amount_scale
         self._amount_offset = amount_offset
+        self._turnover_scale = turnover_scale
         self._missing = missing or set()
 
     def read(
@@ -749,7 +781,7 @@ class _FakeBaoStockClient:
             "amount": str(
                 float(source[2]) * self._amount_scale + self._amount_offset
             ),
-            "turnover_percent": source[3],
+            "turnover_percent": str(float(source[3]) * self._turnover_scale),
             "volume_unit": "SHARE",
             "amount_unit": "CNY",
             "turnover_unit": "PERCENT",

@@ -21,7 +21,38 @@ if [ ! -f "$HEALTH_ARTIFACT" ]; then
 fi
 FETCHED_AT="$(date -u '+%Y-%m-%dT%H:%M:%S+00:00')"
 SNAPSHOT_CLI="$(dirname "$0")/../.venv/bin/yifei-platform-turnover-snapshot"
+REFERENCE_CLI="$(dirname "$0")/../.venv/bin/yifei-platform-turnover-reference"
 PYTHON_BIN="$(dirname "$0")/../.venv/bin/python"
+
+refresh_float_share_reference() {
+  source_version="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["source_version"])' \
+      "$TURNOVER_SNAPSHOT"
+  )"
+  if [ "$source_version" != "baostock-daily-turnover.v1" ]; then
+    return 0
+  fi
+  reference_root="$(dirname "$FLOAT_SHARE_REFERENCE")"
+  dated_reference="$reference_root/baostock-float-shares-$AS_OF.v1.json"
+  if ! "$REFERENCE_CLI" \
+      --market-db "$SOURCE_DB" \
+      --turnover-snapshot "$TURNOVER_SNAPSHOT" \
+      --as-of "$AS_OF" \
+      --created-at "$FETCHED_AT" \
+      --output "$dated_reference" >/dev/null; then
+    echo "warning: exact BaoStock snapshot could not renew float-share reference" >&2
+    return 0
+  fi
+  temporary_link="$reference_root/.current.v1.json.$$"
+  if ln -s "$(basename "$dated_reference")" "$temporary_link" \
+      && mv -f "$temporary_link" "$FLOAT_SHARE_REFERENCE"; then
+    :
+  else
+    rm -f "$temporary_link"
+    echo "warning: could not advance float-share reference symlink" >&2
+  fi
+}
 
 run_with_timeout() {
   timeout_seconds="$1"
@@ -90,6 +121,7 @@ validate_existing_snapshot() {
 
 if [ -f "$TURNOVER_SNAPSHOT" ]; then
   validate_existing_snapshot
+  refresh_float_share_reference
   echo "reusing validated immutable turnover snapshot: $TURNOVER_SNAPSHOT"
 else
   if run_with_timeout 300 "$SNAPSHOT_CLI" \
@@ -98,10 +130,11 @@ else
       --fetched-at "$FETCHED_AT" \
       --exact-provider baostock \
       --output "$TURNOVER_SNAPSHOT"; then
-    :
+    refresh_float_share_reference
   else
     if [ -f "$TURNOVER_SNAPSHOT" ]; then
       validate_existing_snapshot
+      refresh_float_share_reference
       echo "reusing validated snapshot created by a concurrent runner"
     else
       echo "warning: BaoStock turnover unavailable or invalid; trying Eastmoney" >&2

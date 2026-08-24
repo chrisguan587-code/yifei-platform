@@ -64,6 +64,18 @@ reads the research supplemental database. The initial reference may be
 published once from the already audited BaoStock-derived capital dataset,
 after checking its `SHARE`, `CNY` and `PERCENT` metadata.
 
+After the initial publication, every validated exact-date BaoStock turnover
+snapshot may renew the reference deterministically:
+
+```text
+float_shares = volume_shares / (turnover_percent / 100)
+```
+
+The dated reference remains immutable. The daily runner atomically advances a
+`current.v1.json` symbolic link only after the new reference passes the same
+unit, plausibility and 99% coverage gates. Eastmoney snapshots never renew a
+BaoStock reference.
+
 The reference may be at most 20 published trading sessions old. An older
 reference is a hard failure. The derived snapshot uses:
 
@@ -74,7 +86,10 @@ source_version = baostock-float-share-derived-turnover.v1
 
 This bounded fallback avoids making every daily publication depend on a
 successful BaoStock login while preventing a stale float-share denominator
-from being used indefinitely.
+from being used indefinitely. If all exact providers are unavailable and the
+reference is missing or older than 20 sessions, turnover is published as an
+explicit missing fact; the independently valid stock-daily core may still
+publish readiness.
 
 ## 3. Supported neutral universe
 

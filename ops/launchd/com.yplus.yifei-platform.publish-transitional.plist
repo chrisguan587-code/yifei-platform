@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.yplus.yifei-platform.publish-transitional</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>/Users/y-plus/projects/yifei/yifei-platform/scripts/run_turnover_enriched_daily.sh</string>
+    <string>/Users/y-plus/projects/yifei_V3.1.0/data/db/stock_data.db</string>
+    <string>/Users/y-plus/projects/yifei_V3.1.0/data/output/data_update_health</string>
+    <string>/Users/y-plus/projects/yifei/data/shared/turnover_snapshots</string>
+    <string>/Users/y-plus/projects/yifei/data/shared/turnover_references/current.v1.json</string>
+    <string>/Users/y-plus/projects/yifei/data/shared/market_data.db</string>
+    <string>/Users/y-plus/projects/yifei/data/shared/platform_state</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/y-plus/projects/yifei/yifei-platform</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>17</integer>
+    <key>Minute</key>
+    <integer>45</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/y-plus/projects/yifei/data/logs/platform_publish.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/y-plus/projects/yifei/data/logs/platform_publish_err.log</string>
+</dict>
+</plist>
