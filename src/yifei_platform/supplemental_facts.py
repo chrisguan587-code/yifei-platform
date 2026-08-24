@@ -18,6 +18,7 @@ from .readiness import ReadinessMarkerV1, ReadinessStoreV1
 
 
 SUPPLEMENTAL_SCHEMA_VERSION = "supplemental-market-facts.v1"
+BOARD_DAILY_MINIMUM_ROWS = 80
 
 
 def serialized_supplemental_publication_v1(function):
@@ -118,6 +119,15 @@ class SupplementalFactReadResultV1:
 class SupplementalMigrationResultV1:
     target_path: Path
     latest_available_as_of: str
+    schema_version: str
+
+
+@dataclass(frozen=True)
+class ThsMembershipMigrationResultV1:
+    target_path: Path
+    valid_from: str
+    stock_count: int
+    board_count: int
     schema_version: str
 
 
@@ -516,6 +526,127 @@ def migrate_legacy_board_facts_v1(
         temporary.unlink(missing_ok=True)
 
 
+@serialized_supplemental_publication_v1
+def migrate_legacy_ths_membership_v1(
+    *,
+    source_path: Path,
+    target_path: Path,
+    valid_from: str,
+    fetched_at: str,
+    source_version: str,
+) -> ThsMembershipMigrationResultV1:
+    """Import one fixed annual THS industry snapshot without a runtime V3 dependency."""
+    source = source_path.resolve(strict=True)
+    target = target_path.resolve(strict=True)
+    if source == target:
+        raise ValueError("source_path and target_path must be different")
+    date.fromisoformat(valid_from)
+    parsed = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+    if parsed.utcoffset() is None:
+        raise ValueError("fetched_at must include a timezone")
+    if not source_version.strip():
+        raise ValueError("source_version is required")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    source_name = "v3_snapshot.pywencai"
+    try:
+        shutil.copy2(target, temporary)
+        with sqlite3.connect(temporary, uri=True) as connection:
+            _create_schema(connection)
+            source_uri = f"{source.as_uri()}?mode=ro"
+            connection.execute("ATTACH DATABASE ? AS legacy", (source_uri,))
+            required = {"stock_code", "ths_l2_industry"}
+            missing = sorted(
+                required - _columns(connection, "legacy.ths_stock_industry")
+            )
+            if missing:
+                raise ValueError(
+                    "legacy ths_stock_industry missing columns: "
+                    + ", ".join(missing)
+                )
+            names = connection.execute(
+                """SELECT DISTINCT board_name FROM ths_board_daily
+                   WHERE trade_date=(SELECT MAX(trade_date)
+                                     FROM ths_board_daily)"""
+            ).fetchall()
+            if len(names) < BOARD_DAILY_MINIMUM_ROWS:
+                raise ValueError("target ths_board_daily coverage is insufficient")
+            board_names = {str(row[0]) for row in names}
+            legacy_columns = _columns(connection, "legacy.ths_stock_industry")
+            stock_name = "stock_name" if "stock_name" in legacy_columns else "NULL"
+            rows = connection.execute(
+                f"""SELECT stock_code, {stock_name}, ths_l2_industry
+                    FROM legacy.ths_stock_industry
+                    WHERE stock_code IS NOT NULL
+                      AND ths_l2_industry IS NOT NULL
+                      AND ths_l2_industry<>''
+                    ORDER BY stock_code"""
+            ).fetchall()
+            mapped_names = {str(row[2]) for row in rows}
+            unknown = sorted(mapped_names - board_names)
+            if unknown:
+                raise ValueError(
+                    "legacy THS names absent from ths_board_daily: "
+                    + ", ".join(unknown[:5])
+                )
+            if mapped_names != board_names:
+                raise ValueError("legacy THS membership does not cover all boards")
+            connection.execute("BEGIN")
+            connection.execute(
+                """DELETE FROM sector_membership_history
+                   WHERE source=? AND sector_level='THS_L2' AND valid_from=?""",
+                (source_name, valid_from),
+            )
+            connection.executemany(
+                """INSERT INTO sector_membership_history (
+                       stock_code, stock_name, sector_code, sector_name,
+                       sector_level, valid_from, valid_to_exclusive, source,
+                       source_version, fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    (
+                        str(stock_code), stock_name, f"THS_L2:{sector_name}",
+                        str(sector_name), "THS_L2", valid_from, None,
+                        source_name, source_version, fetched_at,
+                    )
+                    for stock_code, stock_name, sector_name in rows
+                ),
+            )
+            connection.executemany(
+                """INSERT INTO supplemental_metadata(key, value)
+                   VALUES (?, ?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                (
+                    ("ths_membership_source_version", source_version),
+                    ("ths_membership_fetched_at", fetched_at),
+                    ("ths_membership_valid_from", valid_from),
+                ),
+            )
+            connection.commit()
+            integrity = connection.execute(
+                "PRAGMA main.integrity_check"
+            ).fetchone()[0]
+            if integrity != "ok":
+                raise ValueError(
+                    f"supplemental database integrity failed: {integrity}"
+                )
+        os.replace(temporary, target)
+        return ThsMembershipMigrationResultV1(
+            target_path=target,
+            valid_from=valid_from,
+            stock_count=len(rows),
+            board_count=len(mapped_names),
+            schema_version=SUPPLEMENTAL_SCHEMA_VERSION,
+        )
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def initialize_supplemental_database_v1(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(database_path) as connection:
@@ -638,7 +769,10 @@ def _require_ready_dataset(
         count = connection.execute(query, parameters).fetchone()[0]
     else:
         raise ValueError(f"unsupported readiness dataset: {dataset}")
-    required_count = 1 if dataset == "ths_board_daily" else minimum_count
+    required_count = (
+        BOARD_DAILY_MINIMUM_ROWS
+        if dataset == "ths_board_daily" else minimum_count
+    )
     if int(count) < required_count:
         raise ValueError(
             f"cannot publish ready for missing dataset or incomplete dataset "

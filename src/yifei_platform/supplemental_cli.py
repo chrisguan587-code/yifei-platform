@@ -7,7 +7,13 @@ from pathlib import Path
 
 from .supplemental_facts import (
     migrate_legacy_board_facts_v1,
+    migrate_legacy_ths_membership_v1,
     publish_supplemental_readiness_v1,
+)
+from .board_daily_ingestion import (
+    AkshareThsBoardDailyClientV1,
+    BOARD_DAILY_SOURCE_VERSION,
+    sync_board_daily_v1,
 )
 from .public_data_ingestion import (
     CAPITAL_SOURCE_VERSION,
@@ -49,6 +55,23 @@ def main() -> int:
     board.add_argument("--published-at", required=True)
     board.add_argument("--source-version", required=True)
     board.add_argument("--readiness-root", type=Path)
+
+    membership_snapshot = subparsers.add_parser("migrate-ths-membership")
+    membership_snapshot.add_argument("--source-db", type=Path, required=True)
+    membership_snapshot.add_argument("--target-db", type=Path, required=True)
+    membership_snapshot.add_argument("--valid-from", required=True)
+    membership_snapshot.add_argument("--fetched-at", required=True)
+    membership_snapshot.add_argument("--source-version", required=True)
+
+    board_daily = subparsers.add_parser("sync-board-daily")
+    board_daily.add_argument("--market-db", type=Path, required=True)
+    board_daily.add_argument("--target-db", type=Path, required=True)
+    board_daily.add_argument("--as-of", required=True)
+    board_daily.add_argument("--fetched-at", required=True)
+    board_daily.add_argument(
+        "--source-version", default=BOARD_DAILY_SOURCE_VERSION,
+    )
+    board_daily.add_argument("--readiness-root", type=Path)
 
     backfill = subparsers.add_parser("backfill-tushare")
     backfill.add_argument("--market-db", type=Path, required=True)
@@ -179,6 +202,51 @@ def main() -> int:
                 source_versions={
                     "ths_board_daily": args.source_version,
                 },
+                dataset_coverages={"ths_board_daily": None},
+                bundle="v4-research-board",
+            )
+            payload["readiness_marker_id"] = marker.marker_id
+    elif args.command == "migrate-ths-membership":
+        result = migrate_legacy_ths_membership_v1(
+            source_path=args.source_db,
+            target_path=args.target_db,
+            valid_from=args.valid_from,
+            fetched_at=args.fetched_at,
+            source_version=args.source_version,
+        )
+        payload = {
+            "dataset": "sector_membership_history",
+            "sector_level": "THS_L2",
+            "valid_from": result.valid_from,
+            "stock_count": result.stock_count,
+            "board_count": result.board_count,
+            "schema_version": result.schema_version,
+            "target_path": str(result.target_path),
+        }
+    elif args.command == "sync-board-daily":
+        result = sync_board_daily_v1(
+            client=AkshareThsBoardDailyClientV1(),
+            market_database_path=args.market_db,
+            target_path=args.target_db,
+            as_of=args.as_of,
+            fetched_at=args.fetched_at,
+            source_version=args.source_version,
+        )
+        payload = {
+            "dataset": "ths_board_daily",
+            "first_synced_date": result.first_synced_date,
+            "inserted_row_count": result.inserted_row_count,
+            "latest_available_as_of": result.latest_available_as_of,
+            "synced_session_count": result.synced_session_count,
+            "target_path": str(result.target_path),
+        }
+        if args.readiness_root:
+            marker = publish_supplemental_readiness_v1(
+                database_path=result.target_path,
+                readiness_root=args.readiness_root,
+                as_of=result.latest_available_as_of,
+                published_at=args.fetched_at,
+                source_versions={"ths_board_daily": result.source_version},
                 dataset_coverages={"ths_board_daily": None},
                 bundle="v4-research-board",
             )

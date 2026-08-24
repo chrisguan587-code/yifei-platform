@@ -27,6 +27,7 @@ from yifei_platform.supplemental_facts import (
     calculate_sector_strength_v1,
     initialize_supplemental_database_v1,
     migrate_legacy_board_facts_v1,
+    migrate_legacy_ths_membership_v1,
     publish_supplemental_readiness_v1,
 )
 from yifei_platform.tushare_ingestion import backfill_tushare_supplemental_v1
@@ -183,6 +184,79 @@ class SupplementalFactsContractTest(unittest.TestCase):
                 target_path=target,
                 published_at="2026-07-27T10:00:00+08:00",
                 source_version="legacy-ths-board.2026-07-27.v1",
+            )
+        self.assertEqual(before, target.read_bytes())
+
+    def test_legacy_ths_membership_migration_is_fixed_and_exact(self) -> None:
+        legacy = self.root / "legacy-membership.db"
+        target = self.root / "membership-facts.db"
+        board_names = [f"板块{index:03d}" for index in range(80)]
+        with sqlite3.connect(target) as connection:
+            connection.execute(
+                """CREATE TABLE ths_board_daily (
+                    board_code TEXT, board_name TEXT, trade_date TEXT,
+                    open REAL, high REAL, low REAL, close REAL,
+                    volume REAL, amount REAL, pct_chg REAL,
+                    PRIMARY KEY(board_code, trade_date))"""
+            )
+            connection.executemany(
+                "INSERT INTO ths_board_daily VALUES (?,?,?,?,?,?,?,?,?,?)",
+                [
+                    (f"B{index:03d}", name, "2026-08-21", 1, 1, 1, 1,
+                     1, 1, 0)
+                    for index, name in enumerate(board_names)
+                ],
+            )
+        with sqlite3.connect(legacy) as connection:
+            connection.execute(
+                """CREATE TABLE ths_stock_industry (
+                    stock_code TEXT, stock_name TEXT, ths_l2_industry TEXT)"""
+            )
+            connection.executemany(
+                "INSERT INTO ths_stock_industry VALUES (?,?,?)",
+                [
+                    (f"{index:06d}", f"股票{index}", name)
+                    for index, name in enumerate(board_names)
+                ],
+            )
+
+        result = migrate_legacy_ths_membership_v1(
+            source_path=legacy,
+            target_path=target,
+            valid_from="2026-01-01",
+            fetched_at="2026-08-22T12:00:00+08:00",
+            source_version="v3-ths-stock-industry.2026.v1",
+        )
+        self.assertEqual(80, result.stock_count)
+        self.assertEqual(80, result.board_count)
+        with sqlite3.connect(target) as connection:
+            row = connection.execute(
+                """SELECT sector_code, sector_level, valid_from, source
+                   FROM sector_membership_history WHERE stock_code='000000'"""
+            ).fetchone()
+            persisted = connection.execute(
+                """SELECT COUNT(*) FROM sector_membership_history
+                   WHERE valid_from='2026-01-01' AND sector_level='THS_L2'"""
+            ).fetchone()[0]
+        self.assertEqual(80, persisted)
+        self.assertEqual(
+            ("THS_L2:板块000", "THS_L2", "2026-01-01", "v3_snapshot.pywencai"),
+            row,
+        )
+
+        before = target.read_bytes()
+        with sqlite3.connect(legacy) as connection:
+            connection.execute(
+                "UPDATE ths_stock_industry SET ths_l2_industry='错误板块' "
+                "WHERE stock_code='000000'"
+            )
+        with self.assertRaisesRegex(ValueError, "absent"):
+            migrate_legacy_ths_membership_v1(
+                source_path=legacy,
+                target_path=target,
+                valid_from="2026-01-01",
+                fetched_at="2026-08-22T12:00:00+08:00",
+                source_version="v3-ths-stock-industry.2026.v1",
             )
         self.assertEqual(before, target.read_bytes())
 

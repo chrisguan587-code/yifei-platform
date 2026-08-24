@@ -33,6 +33,12 @@ from .board_capital import (
     FactReadResultV1,
     SectorCapitalFactV1,
 )
+from .board_daily_ingestion import (
+    AkshareThsBoardDailyClientV1,
+    BOARD_DAILY_SOURCE_VERSION,
+    BoardDailySyncResultV1,
+    sync_board_daily_v1,
+)
 from .eligibility import (
     HISTORICAL_ST_RULE_VERSION,
     EligibilityFactsV1,
@@ -66,9 +72,11 @@ from .supplemental_facts import (
     StockCapitalFactReaderV1,
     SupplementalFactReadResultV1,
     SupplementalMigrationResultV1,
+    ThsMembershipMigrationResultV1,
     calculate_sector_strength_v1,
     initialize_supplemental_database_v1,
     migrate_legacy_board_facts_v1,
+    migrate_legacy_ths_membership_v1,
     publish_supplemental_readiness_v1,
 )
 from .tushare_ingestion import (
@@ -137,7 +145,7 @@ from .outcomes import (
     PriceLineageGuardV2,
 )
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
     "BOOTSTRAP_VERSION",
@@ -151,7 +159,10 @@ __all__ = [
     "DAY0_COHORT_MINIMUM_COVERAGE",
     "DAY0_COHORT_PRICE_BASIS_VERSION",
     "BoardDailyFactV1",
+    "BoardDailySyncResultV1",
     "BoardFactReaderV1",
+    "AkshareThsBoardDailyClientV1",
+    "BOARD_DAILY_SOURCE_VERSION",
     "CapitalFactReaderV1",
     "EligibilityFactsV1",
     "EligibilityPrimitiveV1",
@@ -195,6 +206,7 @@ __all__ = [
     "StockCapitalFactReaderV1",
     "SupplementalFactReadResultV1",
     "SupplementalMigrationResultV1",
+    "ThsMembershipMigrationResultV1",
     "TUSHARE_SOURCE_VERSION",
     "TushareApiClientV1",
     "TushareBackfillResultV1",
@@ -224,6 +236,7 @@ __all__ = [
     "TradeDateContextV1",
     "TradingCalendarV1",
     "bootstrap_market_data",
+    "sync_board_daily_v1",
     "backfill_tushare_supplemental_v1",
     "backfill_public_supplemental_v1",
     "backfill_public_capital_v1",
@@ -239,6 +252,7 @@ __all__ = [
     "load_market_metadata",
     "load_trading_sessions",
     "migrate_legacy_board_facts_v1",
+    "migrate_legacy_ths_membership_v1",
     "publish_supplemental_readiness_v1",
     "publish_transitional_daily_market_data",
     "publish_turnover_enriched_daily_market_data",

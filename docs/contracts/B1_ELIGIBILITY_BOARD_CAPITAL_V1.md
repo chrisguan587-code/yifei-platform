@@ -12,6 +12,21 @@ Current `stock_daily` has no historical delisting field. Therefore `delisting_st
 
 Reads exact historical rows from `ths_board_daily` through a read-only connection. It returns raw OHLC, volume, amount, and percentage change with source/schema versions. It does not return mainline, lifecycle, confidence, action, or position coefficients.
 
+## BoardDailyPublisherV1
+
+The board publisher runs after the authoritative `stock_daily` row for the same
+market date is available. It synchronizes missing sessions from the AKShare THS
+industry-board endpoint into `ths_board_daily`; it does not read V3 tables or
+application output.
+
+- each newly published market date requires at least 80 valid board rows;
+- all missing sessions since the latest published board date are validated
+  before a single atomic replacement of the shared supplemental database;
+- a source failure or insufficient coverage leaves the previous database
+  unchanged and is reported as unavailable, never as a neutral board day;
+- `pct_chg` is deterministically calculated from adjacent source closes because
+  the THS history endpoint does not return a daily percentage-change field.
+
 ## CapitalFactReaderV1
 
 V1 reads sector-level facts from `sector_fund_flow_daily`: raw amount, change,
@@ -53,9 +68,17 @@ V3 `sector_fund_flow/{date}` files are a cache layer, not an independent source.
 `get_sector_hot_plates()` contains hotspot and limit-up semantics and remains
 outside this neutral fact contract.
 
-## Deferred Membership Contract
+## THS Annual Membership Snapshot v1
 
-`ths_stock_industry` is a current snapshot with `updated_at`, not a history table with validity intervals. It cannot support reliable PIT replay. A public Board Membership contract is deferred until the Platform writer stores `valid_from/valid_to` or immutable dated snapshots.
+The 2026 research contract permits one fixed annual THS L2 membership snapshot.
+It is imported once into `sector_membership_history` with
+`sector_level=THS_L2`, `valid_from=2026-01-01`, a source version and fetch
+time. The imported rows are independent of V3 at read time.
+
+This is a deliberately coarse annual classification, not a claim of intrayear
+PIT membership history. It is valid only for the frozen 2026 research window;
+a future annual refresh must publish a new explicit version. Import fails unless
+every mapped board name exactly exists in the published THS board taxonomy.
 
 ## Compatibility
 
