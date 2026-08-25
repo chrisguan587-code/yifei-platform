@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .daily_market import (
+    AkshareCsi300DailyClientV1,
     PlatformDailySnapshotClientV1,
     publish_platform_daily_market_data,
 )
@@ -25,6 +26,7 @@ def main() -> int:
         readiness_root=args.readiness_root,
         as_of=args.as_of,
         published_at=args.published_at,
+        index_client=AkshareCsi300DailyClientV1(),
     )
     print(json.dumps({
         "as_of": result.as_of,

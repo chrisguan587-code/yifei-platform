@@ -10,6 +10,10 @@ from yifei_platform.daily_market import (
     publish_platform_daily_market_data,
 )
 from yifei_platform.bootstrap import load_market_metadata, load_trading_sessions
+from yifei_platform.market_observation import (
+    append_market_observation_facts_v1,
+    initialize_market_observation_schema_v1,
+)
 from yifei_platform.readiness import ReadinessStoreV1
 
 
@@ -25,6 +29,25 @@ class StubSnapshotClient:
         del as_of, prior_stock_codes
         self.calls += 1
         return self.rows
+
+
+class StubIndexClient:
+    source_version = "stub-csi300.v1"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fetch(self, *, as_of: str) -> dict[str, object]:
+        self.calls += 1
+        return {
+            "date": as_of,
+            "open": 4000.0,
+            "high": 4050.0,
+            "low": 3980.0,
+            "close": 4030.0,
+            "volume": 1000.0,
+            "amount": 2000.0,
+        }
 
 
 class PlatformDailyMarketPublisherTest(unittest.TestCase):
@@ -54,6 +77,13 @@ class PlatformDailyMarketPublisherTest(unittest.TestCase):
                     ('producer_version','bootstrap-market-data.v1'),
                     ('published_at','2026-08-24T17:00:00+08:00');
             """)
+            initialize_market_observation_schema_v1(connection)
+            append_market_observation_facts_v1(
+                connection,
+                as_of="2026-08-24",
+                index_row=None,
+                index_source_version=None,
+            )
         self.policy = DailyMarketQualityPolicyV1(
             minimum_rows=2, minimum_prior_code_coverage=1.0
         )
@@ -62,7 +92,7 @@ class PlatformDailyMarketPublisherTest(unittest.TestCase):
         self.tempdir.cleanup()
 
     def test_appends_exact_date_and_publishes_readiness_without_v3(self) -> None:
-        result = self._publish(self._rows())
+        result = self._publish(self._rows(), index_client=StubIndexClient())
 
         self.assertEqual("2026-08-25", result.as_of)
         self.assertEqual(4, result.row_count)
@@ -70,24 +100,39 @@ class PlatformDailyMarketPublisherTest(unittest.TestCase):
             ("2026-08-24", "2026-08-25"), load_trading_sessions(self.target)
         )
         metadata = load_market_metadata(self.target)
-        self.assertEqual("platform-daily-market.v1", metadata["producer_version"])
+        self.assertEqual("platform-daily-market.v2", metadata["producer_version"])
         self.assertNotIn("yifei_V3", str(metadata))
         with sqlite3.connect(self.target) as connection:
             rows = connection.execute(
                 "SELECT stock_code,turnover,is_st FROM stock_daily "
                 "WHERE trade_date='2026-08-25' ORDER BY stock_code"
             ).fetchall()
+            breadth = connection.execute(
+                "SELECT advance_count,decline_count,valid_return_count "
+                "FROM market_breadth_daily WHERE trade_date='2026-08-25'"
+            ).fetchone()
+            index_row = connection.execute(
+                "SELECT index_code,close,source_version FROM index_daily "
+                "WHERE trade_date='2026-08-25'"
+            ).fetchone()
         self.assertEqual([("000001", None, 0), ("600000", None, 1)], rows)
+        self.assertEqual((1, 1, 2), breadth)
+        self.assertEqual(("000300.SH", 4030.0, "stub-csi300.v1"), index_row)
         marker = ReadinessStoreV1(self.readiness).read_ready(
             bundle="v4-market-core", as_of="2026-08-25"
         )
         self.assertIsNotNone(marker)
-        self.assertEqual("platform-daily-market.v1", marker.producer_version)
+        self.assertEqual("platform-daily-market.v2", marker.producer_version)
 
     def test_same_day_retry_is_idempotent_but_changed_content_is_rejected(self) -> None:
         first = self._publish(self._rows())
-        second = self._publish(self._rows(), published_at="2026-08-25T19:00:00+08:00")
+        retry_index = StubIndexClient()
+        second = self._publish(
+            self._rows(), index_client=retry_index,
+            published_at="2026-08-25T19:00:00+08:00",
+        )
         self.assertEqual(first, second)
+        self.assertEqual(0, retry_index.calls)
 
         changed = self._rows()
         changed[0] = {**changed[0], "成交额": 9999.0}
@@ -148,8 +193,25 @@ class PlatformDailyMarketPublisherTest(unittest.TestCase):
             )
         self.assertEqual(0, client.calls)
 
+    def test_daily_publication_requires_completed_observation_migration(self) -> None:
+        with sqlite3.connect(self.target) as connection:
+            connection.execute("DROP TABLE market_breadth_daily")
+        client = StubSnapshotClient(self._rows())
+
+        with self.assertRaisesRegex(ValueError, "must be migrated"):
+            publish_platform_daily_market_data(
+                client=client,
+                target_path=self.target,
+                readiness_root=self.readiness,
+                as_of="2026-08-25",
+                published_at="2026-08-25T18:00:00+08:00",
+                quality_policy=self.policy,
+            )
+
+        self.assertEqual(0, client.calls)
+
     def _publish(
-        self, rows: list[dict[str, object]],
+        self, rows: list[dict[str, object]], *, index_client=None,
         published_at: str = "2026-08-25T18:00:00+08:00",
     ):
         return publish_platform_daily_market_data(
@@ -158,6 +220,7 @@ class PlatformDailyMarketPublisherTest(unittest.TestCase):
             readiness_root=self.readiness,
             as_of="2026-08-25",
             published_at=published_at,
+            index_client=index_client,
             quality_policy=self.policy,
         )
 

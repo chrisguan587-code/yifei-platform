@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -18,15 +19,19 @@ from .bootstrap import (
     BootstrapResult,
     _publication_lock,
     _sha256,
-    _validate_database,
     load_market_metadata,
+)
+from .market_observation import (
+    append_market_observation_facts_v1,
+    initialize_market_observation_schema_v1,
 )
 from .quality import DataQualitySnapshotV1, DatasetQualityV1, QualityStatus
 from .readiness import ReadinessStoreV1
 
 
-PLATFORM_DAILY_MARKET_VERSION = "platform-daily-market.v1"
-PLATFORM_DAILY_SCHEMA_VERSION = "market-data.platform-daily.v1"
+PLATFORM_DAILY_MARKET_VERSION = "platform-daily-market.v2"
+PLATFORM_DAILY_SCHEMA_VERSION = "market-data.platform-daily.v2"
+LOGGER = logging.getLogger(__name__)
 
 
 class DailyMarketSnapshotClientV1(Protocol):
@@ -36,6 +41,12 @@ class DailyMarketSnapshotClientV1(Protocol):
     def fetch(
         self, *, as_of: str, prior_stock_codes: Sequence[str]
     ) -> Sequence[Mapping[str, object]]: ...
+
+
+class DailyIndexSnapshotClientV1(Protocol):
+    source_version: str
+
+    def fetch(self, *, as_of: str) -> Mapping[str, object]: ...
 
 
 @dataclass(frozen=True)
@@ -140,6 +151,26 @@ class PlatformDailySnapshotClientV1:
             return rows
 
 
+class AkshareCsi300DailyClientV1:
+    source_version = "akshare.sina-csi300-daily.v1"
+
+    def fetch(self, *, as_of: str) -> Mapping[str, object]:
+        import akshare as ak
+
+        frame = ak.stock_zh_index_daily(symbol="sh000300")
+        if frame is None or frame.empty:
+            raise RuntimeError("CSI 300 daily response is empty")
+        for row in reversed(frame.to_dict("records")):
+            raw_date = row.get("date")
+            row_date = (
+                raw_date.strftime("%Y-%m-%d")
+                if hasattr(raw_date, "strftime") else str(raw_date)[:10]
+            )
+            if row_date == as_of:
+                return {**row, "date": row_date}
+        raise RuntimeError(f"CSI 300 daily row missing for {as_of}")
+
+
 def publish_platform_daily_market_data(
     *,
     client: DailyMarketSnapshotClientV1,
@@ -147,6 +178,7 @@ def publish_platform_daily_market_data(
     readiness_root: Path,
     as_of: str,
     published_at: str,
+    index_client: DailyIndexSnapshotClientV1 | None = None,
     quality_policy: DailyMarketQualityPolicyV1 = DailyMarketQualityPolicyV1(),
 ) -> BootstrapResult:
     requested = date.fromisoformat(as_of).isoformat()
@@ -159,6 +191,11 @@ def publish_platform_daily_market_data(
 
     with _publication_lock(target_path):
         current = _database_state(target)
+        _require_market_observation_history(
+            target,
+            latest_session=str(current["max_trade_date"]),
+            expected_session_count=int(current["session_count"]),
+        )
         if requested < current["max_trade_date"]:
             raise ValueError(
                 f"as_of {requested} is older than current target "
@@ -176,13 +213,25 @@ def publish_platform_daily_market_data(
             prior_stock_codes=tuple(current["latest_codes"]),
         ), requested)
         _validate_snapshot(normalized, current, quality_policy)
-
         if requested == current["max_trade_date"]:
             if _read_exact_date_rows(target, requested) != normalized:
                 raise ValueError(
                     "same-day source content changed; explicit correction version required"
                 )
             return _existing_result(target, readiness_root, requested)
+
+        index_row: Mapping[str, object] | None = None
+        index_error: str | None = None
+        if index_client is not None:
+            try:
+                index_row = index_client.fetch(as_of=requested)
+            except Exception as exc:
+                index_error = type(exc).__name__
+                LOGGER.warning(
+                    "CSI 300 fetch failed for %s; publishing degraded index quality",
+                    requested,
+                    exc_info=True,
+                )
 
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
@@ -198,8 +247,14 @@ def publish_platform_daily_market_data(
                 published_at=published_at,
                 source_version=client.source_version,
                 prior_state=current,
+                index_row=index_row,
+                index_source_version=(
+                    index_client.source_version if index_client is not None else None
+                ),
             )
-            row_count, session_count = _validate_database(temporary, source_stats)
+            row_count, session_count = _validate_daily_database(
+                temporary, source_stats
+            )
             database_sha256 = _sha256(temporary)
             os.replace(temporary, target)
         finally:
@@ -235,6 +290,31 @@ def publish_platform_daily_market_data(
                     source_version=database_sha256,
                     coverage=min(coverage, 1.0),
                     freshness_lag_sessions=0,
+                ),
+                DatasetQualityV1(
+                    dataset="market_breadth_daily",
+                    status=QualityStatus.OK,
+                    observed_as_of=requested,
+                    source_version="platform:stock_daily:breadth.v1",
+                    coverage=1.0,
+                    freshness_lag_sessions=0,
+                ),
+                DatasetQualityV1(
+                    dataset="index_daily",
+                    status=(QualityStatus.OK if source_stats["index_written"]
+                            else QualityStatus.DEGRADED),
+                    observed_as_of=(requested if source_stats["index_written"] else None),
+                    source_version=(
+                        index_client.source_version
+                        if index_client is not None else "index-client-not-configured"
+                    ),
+                    coverage=(1.0 if source_stats["index_written"] else 0.0),
+                    freshness_lag_sessions=(0 if source_stats["index_written"] else None),
+                    reason_codes=(
+                        () if source_stats["index_written"]
+                        else (("index_fetch_failed:" + index_error,)
+                              if index_error else ("index_client_not_configured",))
+                    ),
                 ),
                 DatasetQualityV1(
                     dataset="turnover",
@@ -320,8 +400,11 @@ def _validate_snapshot(
 def _append_snapshot(
     *, database: Path, rows: tuple[tuple[object, ...], ...], as_of: str,
     published_at: str, source_version: str, prior_state: dict[str, object],
+    index_row: Mapping[str, object] | None,
+    index_source_version: str | None,
 ) -> dict[str, object]:
     with sqlite3.connect(database) as connection:
+        initialize_market_observation_schema_v1(connection)
         connection.execute("BEGIN IMMEDIATE")
         connection.executemany(
             """INSERT INTO stock_daily (
@@ -333,6 +416,14 @@ def _append_snapshot(
         connection.execute(
             "INSERT INTO trading_calendar(trade_date) VALUES (?)", (as_of,)
         )
+        breadth_written, index_written = append_market_observation_facts_v1(
+            connection,
+            as_of=as_of,
+            index_row=index_row,
+            index_source_version=index_source_version,
+        )
+        if not breadth_written:
+            raise ValueError("market breadth was not published for stock snapshot")
         metadata = {
             "schema_version": PLATFORM_DAILY_SCHEMA_VERSION,
             "producer_version": PLATFORM_DAILY_MARKET_VERSION,
@@ -359,7 +450,44 @@ def _append_snapshot(
         "max_trade_date": as_of,
         "session_count": int(prior_state["session_count"]) + 1,
         "as_of_row_count": len(rows),
+        "breadth_written": breadth_written,
+        "index_written": index_written,
     }
+
+
+def _validate_daily_database(
+    database: Path, source_stats: dict[str, object]
+) -> tuple[int, int]:
+    with sqlite3.connect(database) as connection:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        row_count = int(connection.execute(
+            "SELECT COUNT(*) FROM stock_daily"
+        ).fetchone()[0])
+        session_count = int(connection.execute(
+            "SELECT COUNT(*) FROM trading_calendar"
+        ).fetchone()[0])
+        current_stock_count = int(connection.execute(
+            "SELECT COUNT(*) FROM stock_daily WHERE trade_date=?",
+            (source_stats["max_trade_date"],),
+        ).fetchone()[0])
+        breadth_count = int(connection.execute(
+            "SELECT COUNT(*) FROM market_breadth_daily WHERE trade_date=?",
+            (source_stats["max_trade_date"],),
+        ).fetchone()[0])
+        breadth_session_count = int(connection.execute(
+            "SELECT COUNT(*) FROM market_breadth_daily"
+        ).fetchone()[0])
+    if integrity != "ok":
+        raise ValueError(f"published database integrity check failed: {integrity}")
+    if row_count != source_stats["row_count"]:
+        raise ValueError("published stock_daily row count differs from source")
+    if session_count != source_stats["session_count"]:
+        raise ValueError("published trading session count differs from source")
+    if (current_stock_count != source_stats["as_of_row_count"]
+            or breadth_count != 1
+            or breadth_session_count != session_count):
+        raise ValueError("published daily observation coverage mismatch")
+    return row_count, session_count
 
 
 def _database_state(path: Path) -> dict[str, object]:
@@ -385,6 +513,27 @@ def _database_state(path: Path) -> dict[str, object]:
         "latest_codes": latest_codes,
         "latest_code_count": len(latest_codes),
     }
+
+
+def _require_market_observation_history(
+    path: Path, *, latest_session: str, expected_session_count: int
+) -> None:
+    uri = f"{path.resolve().as_uri()}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as connection:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='market_breadth_daily'"
+        ).fetchone()
+        bounds = (
+            connection.execute(
+                "SELECT COUNT(*),MAX(trade_date) FROM market_breadth_daily"
+            ).fetchone()
+            if table else (0, None)
+        )
+    if int(bounds[0]) != expected_session_count or bounds[1] != latest_session:
+        raise ValueError(
+            "market observation history must be migrated before daily publication"
+        )
 
 
 def _read_exact_date_rows(path: Path, as_of: str) -> tuple[tuple[object, ...], ...]:

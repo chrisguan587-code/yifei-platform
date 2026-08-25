@@ -75,7 +75,9 @@ After successful replacement, Platform publishes immutable
 - `universe_discovery = ok` for Sina, or explicit degraded for the bounded
   prior-universe Tencent fallback.
 
-Only `stock_daily` is required for this bundle. A failed run publishes no ready
+Only `stock_daily` is required for this bundle. Market breadth is derived from
+the same stock snapshot. CSI 300 is optional and is reported as degraded when
+its exact-date row is unavailable. A failed core run publishes no ready
 marker. Missing turnover remains visible and cannot be converted to zero or a
 neutral trading interpretation.
 

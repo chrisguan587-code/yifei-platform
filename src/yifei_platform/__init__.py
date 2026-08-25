@@ -62,6 +62,15 @@ from .market_data import (
     StockDailyFactV1,
     StockDailyReadResultV1,
 )
+from .market_observation import (
+    CSI300_CODE,
+    MARKET_OBSERVATION_MIGRATION_VERSION,
+    MARKET_OBSERVATION_SCHEMA_VERSION,
+    MarketObservationMigrationResultV1,
+    append_market_observation_facts_v1,
+    initialize_market_observation_schema_v1,
+    migrate_market_observation_facts_v1,
+)
 from .quality import DataQualitySnapshotV1, DatasetQualityV1, QualityStatus
 from .supplemental_facts import (
     SUPPLEMENTAL_SCHEMA_VERSION,
@@ -182,6 +191,10 @@ __all__ = [
     "DatasetQualityV1",
     "MarketDataReaderV1",
     "MarketDataSourceV1",
+    "CSI300_CODE",
+    "MARKET_OBSERVATION_MIGRATION_VERSION",
+    "MARKET_OBSERVATION_SCHEMA_VERSION",
+    "MarketObservationMigrationResultV1",
     "OUTCOME_BATCH_VERSION",
     "ForwardOutcomeV1",
     "OutcomeBatchResultV1",
@@ -253,6 +266,9 @@ __all__ = [
     "load_trading_sessions",
     "migrate_legacy_board_facts_v1",
     "migrate_legacy_ths_membership_v1",
+    "migrate_market_observation_facts_v1",
+    "append_market_observation_facts_v1",
+    "initialize_market_observation_schema_v1",
     "publish_supplemental_readiness_v1",
     "publish_transitional_daily_market_data",
     "publish_turnover_enriched_daily_market_data",

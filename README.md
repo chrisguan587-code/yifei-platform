@@ -6,11 +6,26 @@ Shared Platform owns market facts and versioned neutral capabilities used by Yif
 
 `yifei-platform-publish-daily-market` is the production owner of the neutral
 A-share post-close snapshot. It appends one exact exchange session to the
-Platform database, publishes `v4-market-core` readiness, and has no V3 path or
+Platform database, derives neutral market breadth, appends the available CSI
+300 daily row, publishes `v4-market-core` readiness, and has no V3 path or
 module dependency. Sina supplies whole-market discovery; a bounded Tencent
 fallback can cover only the prior known universe and is reported as degraded
 universe discovery. See
 [`C3_PLATFORM_DAILY_MARKET_PUBLISHER_V1.md`](./docs/contracts/C3_PLATFORM_DAILY_MARKET_PUBLISHER_V1.md).
+The observation fact contract is defined in
+[`C4_MARKET_OBSERVATION_FACTS_V1.md`](./docs/contracts/C4_MARKET_OBSERVATION_FACTS_V1.md).
+
+The one-time historical migration takes the legacy CSI 300 database only as an
+explicit source and derives historical breadth from Platform `stock_daily`:
+
+```bash
+yifei-platform-migrate-market-observation \
+  --target-db /path/to/market_data.db \
+  --legacy-index-db /path/to/legacy.db \
+  --published-at 2026-08-25T22:30:00+08:00
+```
+
+After that migration, the legacy path is not read by any production task.
 
 The production wrapper requires the official annual exchange calendar before
 it calls the publisher:
