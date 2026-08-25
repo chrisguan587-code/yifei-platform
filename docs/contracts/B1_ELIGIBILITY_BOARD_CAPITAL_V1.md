@@ -27,6 +27,11 @@ application output.
 - `pct_chg` is deterministically calculated from adjacent source closes because
   the THS history endpoint does not return a daily percentage-change field.
 
+The local production schedule runs at 21:10 Shanghai time, after the observed
+THS daily-history publication window. A second invocation at 22:10 is the only
+retry. Publication is idempotent: when the first invocation succeeded, the
+second finds no missing session and performs no source fetch or database write.
+
 ## CapitalFactReaderV1
 
 V1 reads sector-level facts from `sector_fund_flow_daily`: raw amount, change,

@@ -1,4 +1,5 @@
 from pathlib import Path
+import plistlib
 import unittest
 
 
@@ -16,6 +17,20 @@ class BoardDailyLaunchdContractTest(unittest.TestCase):
         self.assertLess(wait_position, sync_position)
         self.assertIn('while [ "$attempt" -lt 80 ]', script)
         self.assertIn("exit 75", script)
+
+    def test_schedule_runs_after_ths_close_data_and_retries_once(self) -> None:
+        plist_path = ROOT / "ops/launchd/com.yplus.yifei-platform.board-daily.plist"
+        with plist_path.open("rb") as stream:
+            payload = plistlib.load(stream)
+
+        self.assertEqual(
+            [
+                {"Hour": 21, "Minute": 10},
+                {"Hour": 22, "Minute": 10},
+            ],
+            payload["StartCalendarInterval"],
+        )
+        self.assertNotIn("yifei_V3", str(payload))
 
 
 if __name__ == "__main__":
