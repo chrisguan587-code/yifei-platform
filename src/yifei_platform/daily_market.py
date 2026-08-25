@@ -1,0 +1,492 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime
+import json
+import math
+import os
+from pathlib import Path
+import re
+import shutil
+import sqlite3
+import tempfile
+import time
+from typing import Mapping, Protocol, Sequence
+import urllib.request
+
+from .bootstrap import (
+    BootstrapResult,
+    _publication_lock,
+    _sha256,
+    _validate_database,
+    load_market_metadata,
+)
+from .quality import DataQualitySnapshotV1, DatasetQualityV1, QualityStatus
+from .readiness import ReadinessStoreV1
+
+
+PLATFORM_DAILY_MARKET_VERSION = "platform-daily-market.v1"
+PLATFORM_DAILY_SCHEMA_VERSION = "market-data.platform-daily.v1"
+
+
+class DailyMarketSnapshotClientV1(Protocol):
+    source_version: str
+    universe_discovery_complete: bool
+
+    def fetch(
+        self, *, as_of: str, prior_stock_codes: Sequence[str]
+    ) -> Sequence[Mapping[str, object]]: ...
+
+
+@dataclass(frozen=True)
+class DailyMarketQualityPolicyV1:
+    minimum_rows: int = 5_000
+    minimum_prior_code_coverage: float = 0.95
+
+    def __post_init__(self) -> None:
+        if self.minimum_rows <= 0:
+            raise ValueError("minimum_rows must be positive")
+        if not 0 < self.minimum_prior_code_coverage <= 1:
+            raise ValueError("minimum_prior_code_coverage must be in (0, 1]")
+
+
+class AkshareSinaSnapshotClientV1:
+    source_version = "akshare.sina-stock-zh-a-spot.v1"
+    universe_discovery_complete = True
+
+    def __init__(self, *, attempts: int = 3, retry_delay_seconds: float = 3.0) -> None:
+        if attempts <= 0 or retry_delay_seconds < 0:
+            raise ValueError("invalid Sina snapshot retry policy")
+        self._attempts = attempts
+        self._retry_delay_seconds = retry_delay_seconds
+
+    def fetch(
+        self, *, as_of: str, prior_stock_codes: Sequence[str]
+    ) -> list[dict[str, object]]:
+        del as_of, prior_stock_codes
+        import akshare as ak
+
+        last_error: Exception | None = None
+        for attempt in range(1, self._attempts + 1):
+            try:
+                frame = ak.stock_zh_a_spot()
+                if frame is None or frame.empty:
+                    raise RuntimeError("Sina A-share snapshot is empty")
+                return list(frame.to_dict("records"))
+            except Exception as exc:
+                last_error = exc
+                if attempt < self._attempts:
+                    time.sleep(self._retry_delay_seconds)
+        raise RuntimeError(
+            f"Sina A-share snapshot failed after {self._attempts} attempts: "
+            f"{last_error}"
+        ) from last_error
+
+
+class TencentPriorUniverseSnapshotClientV1:
+    source_version = "tencent.prior-universe-quotes.v1"
+    universe_discovery_complete = False
+
+    def fetch(
+        self, *, as_of: str, prior_stock_codes: Sequence[str]
+    ) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for start in range(0, len(prior_stock_codes), 60):
+            query = ",".join(
+                _tencent_symbol(code)
+                for code in prior_stock_codes[start:start + 60]
+            )
+            request = urllib.request.Request(
+                f"http://qt.gtimg.cn/q={query}",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=8) as response:
+                    payload = response.read().decode("gbk", errors="ignore")
+            except Exception as exc:
+                raise RuntimeError("Tencent quote batch failed") from exc
+            for line in payload.splitlines():
+                row = _parse_tencent_line(line, as_of)
+                if row is not None:
+                    rows.append(row)
+        if not rows:
+            raise RuntimeError("Tencent prior-universe snapshot is empty")
+        return rows
+
+
+class PlatformDailySnapshotClientV1:
+    def __init__(self) -> None:
+        self.source_version = "not-fetched"
+        self.universe_discovery_complete = False
+
+    def fetch(
+        self, *, as_of: str, prior_stock_codes: Sequence[str]
+    ) -> list[dict[str, object]]:
+        primary = AkshareSinaSnapshotClientV1()
+        try:
+            rows = primary.fetch(
+                as_of=as_of, prior_stock_codes=prior_stock_codes
+            )
+            self.source_version = primary.source_version
+            self.universe_discovery_complete = True
+            return rows
+        except RuntimeError:
+            fallback = TencentPriorUniverseSnapshotClientV1()
+            rows = fallback.fetch(
+                as_of=as_of, prior_stock_codes=prior_stock_codes
+            )
+            self.source_version = fallback.source_version
+            self.universe_discovery_complete = False
+            return rows
+
+
+def publish_platform_daily_market_data(
+    *,
+    client: DailyMarketSnapshotClientV1,
+    target_path: Path,
+    readiness_root: Path,
+    as_of: str,
+    published_at: str,
+    quality_policy: DailyMarketQualityPolicyV1 = DailyMarketQualityPolicyV1(),
+) -> BootstrapResult:
+    requested = date.fromisoformat(as_of).isoformat()
+    timestamp = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+    if timestamp.utcoffset() is None:
+        raise ValueError("published_at must include a timezone")
+    if requested > timestamp.date().isoformat():
+        raise ValueError("as_of cannot be after published_at")
+    target = target_path.resolve(strict=True)
+
+    with _publication_lock(target_path):
+        current = _database_state(target)
+        if requested < current["max_trade_date"]:
+            raise ValueError(
+                f"as_of {requested} is older than current target "
+                f"{current['max_trade_date']}"
+            )
+        if requested == current["max_trade_date"]:
+            metadata = load_market_metadata(target)
+            if metadata["producer_version"] != PLATFORM_DAILY_MARKET_VERSION:
+                raise FileExistsError(
+                    "existing same-day target was not produced by Platform daily publisher"
+                )
+
+        normalized = _normalize_snapshot(client.fetch(
+            as_of=requested,
+            prior_stock_codes=tuple(current["latest_codes"]),
+        ), requested)
+        _validate_snapshot(normalized, current, quality_policy)
+
+        if requested == current["max_trade_date"]:
+            if _read_exact_date_rows(target, requested) != normalized:
+                raise ValueError(
+                    "same-day source content changed; explicit correction version required"
+                )
+            return _existing_result(target, readiness_root, requested)
+
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            shutil.copy2(target, temporary)
+            source_stats = _append_snapshot(
+                database=temporary,
+                rows=normalized,
+                as_of=requested,
+                published_at=published_at,
+                source_version=client.source_version,
+                prior_state=current,
+            )
+            row_count, session_count = _validate_database(temporary, source_stats)
+            database_sha256 = _sha256(temporary)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+        prior_codes = set(current["latest_codes"])
+        observed_codes = {str(row[0]) for row in normalized}
+        coverage = len(prior_codes & observed_codes) / len(prior_codes)
+        universe_quality = DatasetQualityV1(
+            dataset="universe_discovery",
+            status=(
+                QualityStatus.OK
+                if client.universe_discovery_complete
+                else QualityStatus.DEGRADED
+            ),
+            observed_as_of=(requested if client.universe_discovery_complete else None),
+            source_version=client.source_version,
+            coverage=(1.0 if client.universe_discovery_complete else None),
+            reason_codes=(
+                () if client.universe_discovery_complete
+                else ("prior_session_universe_only",)
+            ),
+        )
+        snapshot = DataQualitySnapshotV1.create(
+            as_of=requested,
+            observed_at=published_at,
+            producer_version=PLATFORM_DAILY_MARKET_VERSION,
+            datasets=(
+                DatasetQualityV1(
+                    dataset="stock_daily",
+                    status=QualityStatus.OK,
+                    observed_as_of=requested,
+                    source_version=database_sha256,
+                    coverage=min(coverage, 1.0),
+                    freshness_lag_sessions=0,
+                ),
+                DatasetQualityV1(
+                    dataset="turnover",
+                    status=QualityStatus.DEGRADED,
+                    observed_as_of=None,
+                    source_version="turnover-unavailable.v1",
+                    coverage=0.0,
+                    reason_codes=("turnover_not_in_daily_snapshot",),
+                ),
+                universe_quality,
+            ),
+        )
+        marker = ReadinessStoreV1(readiness_root).publish_ready(
+            bundle="v4-market-core",
+            snapshot=snapshot,
+            required_datasets=("stock_daily",),
+            published_at=published_at,
+            producer_version=PLATFORM_DAILY_MARKET_VERSION,
+        )
+        return BootstrapResult(
+            target, requested, row_count, session_count, database_sha256, marker
+        )
+
+
+def _normalize_snapshot(
+    raw_rows: Sequence[Mapping[str, object]], as_of: str
+) -> tuple[tuple[object, ...], ...]:
+    rows: list[tuple[object, ...]] = []
+    identities: set[str] = set()
+    for raw in raw_rows:
+        code = _stock_code(raw.get("代码"))
+        if code in identities:
+            raise ValueError(f"duplicate stock code in daily snapshot: {code}")
+        identities.add(code)
+        name = str(raw.get("名称") or "").strip()
+        open_price = _optional_positive(raw.get("今开"), "open", code)
+        high = _optional_positive(raw.get("最高"), "high", code)
+        low = _optional_positive(raw.get("最低"), "low", code)
+        preclose = _optional_positive(raw.get("昨收"), "preclose", code)
+        volume = _non_negative(raw.get("成交量"), "volume", code)
+        amount = _non_negative(raw.get("成交额"), "amount", code)
+        close = _non_negative(raw.get("最新价"), "close", code)
+        if close == 0 and not (
+            preclose is not None and volume == 0 and amount == 0
+        ):
+            raise ValueError(f"invalid zero close for {code}")
+        pct_chg = _optional_finite(raw.get("涨跌幅"), "pct_chg", code)
+        if pct_chg is None and preclose is not None:
+            pct_chg = (close - preclose) / preclose * 100
+        observed = [value for value in (open_price, close) if value is not None]
+        if high is not None and high < max(observed):
+            raise ValueError(f"invalid high for {code}")
+        if low is not None and low > min(observed):
+            raise ValueError(f"invalid low for {code}")
+        if high is not None and low is not None and high < low:
+            raise ValueError(f"invalid OHLC range for {code}")
+        rows.append((
+            code, name, as_of, open_price, high, low, close, preclose,
+            volume, amount, pct_chg, None, int("ST" in name.upper()),
+        ))
+    return tuple(sorted(rows, key=lambda row: str(row[0])))
+
+
+def _validate_snapshot(
+    rows: tuple[tuple[object, ...], ...],
+    prior_state: dict[str, object],
+    policy: DailyMarketQualityPolicyV1,
+) -> None:
+    if len(rows) < policy.minimum_rows:
+        raise ValueError(
+            f"daily snapshot row count {len(rows)} is below {policy.minimum_rows}"
+        )
+    prior_codes = set(prior_state["latest_codes"])
+    observed_codes = {str(row[0]) for row in rows}
+    coverage = len(prior_codes & observed_codes) / len(prior_codes)
+    if coverage < policy.minimum_prior_code_coverage:
+        raise ValueError(
+            f"prior-session code coverage {coverage:.6%} is below "
+            f"{policy.minimum_prior_code_coverage:.2%}"
+        )
+
+
+def _append_snapshot(
+    *, database: Path, rows: tuple[tuple[object, ...], ...], as_of: str,
+    published_at: str, source_version: str, prior_state: dict[str, object],
+) -> dict[str, object]:
+    with sqlite3.connect(database) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.executemany(
+            """INSERT INTO stock_daily (
+                   stock_code,stock_name,trade_date,open,high,low,close,preclose,
+                   volume,amount,pct_chg,turnover,is_st
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            rows,
+        )
+        connection.execute(
+            "INSERT INTO trading_calendar(trade_date) VALUES (?)", (as_of,)
+        )
+        metadata = {
+            "schema_version": PLATFORM_DAILY_SCHEMA_VERSION,
+            "producer_version": PLATFORM_DAILY_MARKET_VERSION,
+            "published_at": published_at,
+            "source_manifest": json.dumps(
+                {
+                    "source_version": source_version,
+                    "as_of": as_of,
+                    "as_of_row_count": len(rows),
+                    "previous_max_trade_date": prior_state["max_trade_date"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+        connection.execute("DELETE FROM platform_metadata")
+        connection.executemany(
+            "INSERT INTO platform_metadata(key,value) VALUES (?,?)", metadata.items()
+        )
+        connection.commit()
+    return {
+        "row_count": int(prior_state["row_count"]) + len(rows),
+        "min_trade_date": prior_state["min_trade_date"],
+        "max_trade_date": as_of,
+        "session_count": int(prior_state["session_count"]) + 1,
+        "as_of_row_count": len(rows),
+    }
+
+
+def _database_state(path: Path) -> dict[str, object]:
+    load_market_metadata(path)
+    uri = f"{path.resolve().as_uri()}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as connection:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        row = connection.execute(
+            "SELECT COUNT(*),MIN(trade_date),MAX(trade_date),"
+            "COUNT(DISTINCT trade_date) FROM stock_daily"
+        ).fetchone()
+        if integrity != "ok" or not row or not row[0] or not row[2]:
+            raise ValueError("current Platform market database is invalid")
+        latest_codes = tuple(str(item[0]) for item in connection.execute(
+            "SELECT stock_code FROM stock_daily WHERE trade_date=? ORDER BY stock_code",
+            (row[2],),
+        ))
+    return {
+        "row_count": int(row[0]),
+        "min_trade_date": str(row[1]),
+        "max_trade_date": str(row[2]),
+        "session_count": int(row[3]),
+        "latest_codes": latest_codes,
+        "latest_code_count": len(latest_codes),
+    }
+
+
+def _read_exact_date_rows(path: Path, as_of: str) -> tuple[tuple[object, ...], ...]:
+    uri = f"{path.resolve().as_uri()}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as connection:
+        return tuple(connection.execute(
+            """SELECT stock_code,stock_name,trade_date,open,high,low,close,preclose,
+                      volume,amount,pct_chg,turnover,is_st
+               FROM stock_daily WHERE trade_date=? ORDER BY stock_code""",
+            (as_of,),
+        ))
+
+
+def _existing_result(
+    target: Path, readiness_root: Path, as_of: str
+) -> BootstrapResult:
+    marker = ReadinessStoreV1(readiness_root).read_ready(
+        bundle="v4-market-core", as_of=as_of
+    )
+    if marker is None or marker.producer_version != PLATFORM_DAILY_MARKET_VERSION:
+        raise ValueError("same-day Platform target has no matching readiness marker")
+    state = _database_state(target)
+    return BootstrapResult(
+        target,
+        as_of,
+        int(state["row_count"]),
+        int(state["session_count"]),
+        _sha256(target),
+        marker,
+    )
+
+
+def _stock_code(value: object) -> str:
+    match = re.search(r"(\d{6})$", str(value or "").strip())
+    if match is None:
+        raise ValueError(f"invalid stock code: {value!r}")
+    return match.group(1)
+
+
+def _tencent_symbol(code: str) -> str:
+    if code.startswith(("4", "8", "92")):
+        return f"bj{code}"
+    if code.startswith(("6", "9")):
+        return f"sh{code}"
+    return f"sz{code}"
+
+
+def _parse_tencent_line(line: str, as_of: str) -> dict[str, object] | None:
+    if "=" not in line:
+        return None
+    try:
+        raw_symbol = line.split("=", 1)[0].split("_")[-1]
+        code = _stock_code(raw_symbol)
+        fields = line.split("=", 1)[1].strip().strip('\";').split("~")
+        if len(fields) < 38:
+            return None
+        provider_timestamp = fields[30]
+        if provider_timestamp[:8] != as_of.replace("-", ""):
+            raise ValueError(f"Tencent quote date mismatch for {code}")
+        return {
+            "代码": code,
+            "名称": fields[1] or code,
+            "最新价": float(fields[3] or 0),
+            "昨收": float(fields[4] or 0),
+            "今开": float(fields[5] or 0),
+            "成交量": float(fields[6] or 0) * 100,
+            "涨跌幅": float(fields[32] or 0),
+            "最高": float(fields[33] or 0),
+            "最低": float(fields[34] or 0),
+            "成交额": float(fields[37] or 0) * 10_000,
+        }
+    except (IndexError, ValueError) as exc:
+        if isinstance(exc, ValueError) and "date mismatch" in str(exc):
+            raise
+        return None
+
+
+def _number(value: object, label: str, code: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid {label} for {code}: {value!r}") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"invalid {label} for {code}: {value!r}")
+    return number
+
+
+def _non_negative(value: object, label: str, code: str) -> float:
+    number = _number(value, label, code)
+    if number < 0:
+        raise ValueError(f"invalid {label} for {code}: {value!r}")
+    return number
+
+
+def _optional_positive(value: object, label: str, code: str) -> float | None:
+    if value in (None, "", "-"):
+        return None
+    number = _number(value, label, code)
+    return number if number > 0 else None
+
+
+def _optional_finite(value: object, label: str, code: str) -> float | None:
+    if value in (None, "", "-"):
+        return None
+    return _number(value, label, code)

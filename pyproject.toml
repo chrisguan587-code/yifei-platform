@@ -23,6 +23,7 @@ yifei-platform-turnover-snapshot = "yifei_platform.turnover_cli:main"
 yifei-platform-publish-turnover-enriched = "yifei_platform.turnover_publish_cli:main"
 yifei-platform-turnover-reference = "yifei_platform.turnover_reference_cli:main"
 yifei-platform-publish-exchange-calendar = "yifei_platform.exchange_calendar_cli:main"
+yifei-platform-publish-daily-market = "yifei_platform.daily_market_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

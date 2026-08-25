@@ -2,6 +2,26 @@
 
 Shared Platform owns market facts and versioned neutral capabilities used by Yifei applications.
 
+## Daily market ownership
+
+`yifei-platform-publish-daily-market` is the production owner of the neutral
+A-share post-close snapshot. It appends one exact exchange session to the
+Platform database, publishes `v4-market-core` readiness, and has no V3 path or
+module dependency. Sina supplies whole-market discovery; a bounded Tencent
+fallback can cover only the prior known universe and is reported as degraded
+universe discovery. See
+[`C3_PLATFORM_DAILY_MARKET_PUBLISHER_V1.md`](./docs/contracts/C3_PLATFORM_DAILY_MARKET_PUBLISHER_V1.md).
+
+The production wrapper requires the official annual exchange calendar before
+it calls the publisher:
+
+```bash
+./scripts/run_daily_market.sh \
+  /path/to/exchange_calendar/sse-2026.v1.json \
+  /path/to/market_data.db \
+  /path/to/platform_state
+```
+
 ## Bootstrap migration
 
 `yifei-platform-bootstrap` is a one-time migration tool, not the Platform
@@ -10,16 +30,15 @@ the command line and is never a package default or application dependency.
 
 It publishes an independent SQLite database containing only `stock_daily`,
 `trading_calendar`, and `platform_metadata`, then publishes the immutable
-`v4-market-core` readiness marker. The tool retires after a Platform-owned
-updater has run for five consecutive trading sessions without the legacy data
-task.
+`v4-market-core` readiness marker. The tool is retired once the independent
+database exists.
 
-During the bounded transition, `yifei-platform-publish-transitional` advances
-the public database only after an explicitly supplied same-day source health
-artifact passes. It is specified in
+The historical `yifei-platform-publish-transitional` bridge advanced the public
+database from an explicitly supplied same-day V3 source health artifact. It is
+specified in
 [`C1_TRANSITIONAL_DAILY_PUBLISHER_V1.md`](./docs/contracts/C1_TRANSITIONAL_DAILY_PUBLISHER_V1.md)
-and has the same five-session retirement condition. It is separate from the
-one-time Bootstrap command.
+and must not be loaded alongside the Platform-owned daily publisher. It remains
+only for migration audit and rollback diagnosis.
 
 ```text
 Applications -> Versioned Shared Platform

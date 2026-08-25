@@ -1,6 +1,6 @@
 # V3旧链退役、短线转型与Platform独立切换方案 v0.2
 
-> 状态：M0、M1已完成；V3冻结退役，短线定位转交新项目`yifei-shortline`
+> 状态：M0、V3收口已完成；Platform独立日线Writer已实现，等待首个生产交易日闸门
 > 适用系统：Yifei Platform、Yifei V3.1.0、Yifei Shortline、Yifei V4
 > 冻结日期：2026-08-25
 
@@ -69,22 +69,26 @@
 
 ## 4. 当前状态与迁移边界
 
-### 4.1 当前生产链
+### 4.1 2026-08-25收盘后的切换状态
 
 ```text
-V3 data.update
-  → V3 stock_data.db
-  → V3 data_update_health
-  → Platform Transitional Publisher
+2026-08-25既有事实
+  → data/shared/market_data.db + platform_state（不可变保留）
+
+2026-08-26起
+外部行情源（新浪完整市场；腾讯既有股票池有界兜底）
+  → Platform Daily Market Publisher
   → data/shared/market_data.db + platform_state
-  → V4
+  → V4 / Shortline
 ```
 
 因此：
 
 - V4目前不直接读取V3；
-- Platform生产发布器仍依赖V3物理数据路径；
-- 旧V3交易链可以逐步退役，但V3数据桥在Platform独立前不能直接停止；
+- Platform独立Writer代码和合同已完成，不读取V3物理路径；
+- 旧Transitional Publisher在新Writer加载时必须卸载，禁止双Writer；
+- 首个生产交易日必须核对日期、行数、覆盖率、来源和V4消费成功；
+- 首日闸门通过前保留V3本地目录作为只读回滚材料，不再让它写Platform；
 - V3短线探针已加载，但截至2026-08-25晚间尚未经历真实竞价运行。
 
 ### 4.2 最终数据链

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.yplus.yifei-platform.daily-market</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>/Users/y-plus/projects/yifei/yifei-platform/scripts/run_daily_market.sh</string>
+    <string>/Users/y-plus/projects/yifei/data/shared/exchange_calendar/sse-2026.v1.json</string>
+    <string>/Users/y-plus/projects/yifei/data/shared/market_data.db</string>
+    <string>/Users/y-plus/projects/yifei/data/shared/platform_state</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>17</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/y-plus/projects/yifei/yifei-platform</string>
+  <key>StandardOutPath</key>
+  <string>/Users/y-plus/projects/yifei/data/logs/platform_daily_market.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/y-plus/projects/yifei/data/logs/platform_daily_market_err.log</string>
+</dict>
+</plist>
