@@ -328,7 +328,7 @@ V3代码提交和退役Tag推送远端后封存；必要中立数据迁出，无
 - Platform、V4和Shortline的独立生产任务继续保留；
 - V3数据库实体、代码仓库和运行产物均未在本步骤删除。
 
-随后已完成隐藏运行消费者分离：Hermes停用V3决策面板和旧市场叙事任务，只保留一个20:15调用V4公开命令的市场认知卡任务；`individual-stock-analysis`改读Platform事实合同，不再读取V3数据库。V4市场认知卡只供人工盘后阅读，不进入Discovery、Decision、评分或排序。物理删除前仍须处置未合并worktree、迁移个人事实、制作并校验退役归档包、核对远端仓库和退役Tag，并通过最终删除闸门。详见`docs/124-V3数据资产退役清单-v0.1.md`。
+随后已完成隐藏运行消费者分离：Hermes中的全部定时任务均已删除，Hermes恢复为只被动执行用户命令；V4市场认知卡改由macOS LaunchAgent在工作日20:15调用V4公开命令。`individual-stock-analysis`改读Platform事实合同，不再读取V3数据库。V4市场认知卡只供人工盘后阅读，不进入Discovery、Decision、评分或排序。物理删除前仍须处置未合并worktree、迁移个人事实、制作并校验退役归档包、核对远端仓库和退役Tag，并通过最终删除闸门。详见`docs/124-V3数据资产退役清单-v0.1.md`。
 
 ## 9. 明确不做
 
