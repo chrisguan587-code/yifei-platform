@@ -4,8 +4,11 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sqlite3
 
 from .supplemental_facts import (
+    BOARD_DAILY_MINIMUM_ROWS,
+    SUPPLEMENTAL_SCHEMA_VERSION,
     migrate_legacy_board_facts_v1,
     migrate_legacy_ths_membership_v1,
     publish_supplemental_readiness_v1,
@@ -15,6 +18,7 @@ from .board_daily_ingestion import (
     BOARD_DAILY_SOURCE_VERSION,
     sync_board_daily_v1,
 )
+from .readiness import ReadinessMarkerV1, ReadinessStoreV1
 from .public_data_ingestion import (
     CAPITAL_SOURCE_VERSION,
     PUBLIC_DATA_SOURCE_VERSION,
@@ -241,14 +245,13 @@ def main() -> int:
             "target_path": str(result.target_path),
         }
         if args.readiness_root:
-            marker = publish_supplemental_readiness_v1(
+            marker = _publish_board_readiness(
                 database_path=result.target_path,
                 readiness_root=args.readiness_root,
                 as_of=result.latest_available_as_of,
                 published_at=args.fetched_at,
-                source_versions={"ths_board_daily": result.source_version},
-                dataset_coverages={"ths_board_daily": None},
-                bundle="v4-research-board",
+                source_version=result.source_version,
+                synced_session_count=result.synced_session_count,
             )
             payload["readiness_marker_id"] = marker.marker_id
     elif args.command == "backfill-tushare":
@@ -585,6 +588,60 @@ def main() -> int:
             payload["readiness_marker_id"] = marker.marker_id
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return 0
+
+
+def _publish_board_readiness(
+    *, database_path: Path, readiness_root: Path, as_of: str,
+    published_at: str, source_version: str, synced_session_count: int,
+) -> ReadinessMarkerV1:
+    if synced_session_count == 0:
+        existing = ReadinessStoreV1(readiness_root).read_ready(
+            bundle="v4-research-board", as_of=as_of,
+        )
+        if existing is not None:
+            _validate_reusable_board_readiness(
+                marker=existing,
+                database_path=database_path,
+                as_of=as_of,
+                source_version=source_version,
+            )
+            return existing
+    return publish_supplemental_readiness_v1(
+        database_path=database_path,
+        readiness_root=readiness_root,
+        as_of=as_of,
+        published_at=published_at,
+        source_versions={"ths_board_daily": source_version},
+        dataset_coverages={"ths_board_daily": None},
+        bundle="v4-research-board",
+    )
+
+
+def _validate_reusable_board_readiness(
+    *, marker: ReadinessMarkerV1, database_path: Path,
+    as_of: str, source_version: str,
+) -> None:
+    if (
+        marker.bundle != "v4-research-board"
+        or marker.as_of != as_of
+        or marker.producer_version != SUPPLEMENTAL_SCHEMA_VERSION
+        or marker.required_datasets != ("ths_board_daily",)
+    ):
+        raise ValueError("existing board readiness contract mismatch")
+    with sqlite3.connect(
+        f"file:{database_path.resolve(strict=True)}?mode=ro", uri=True,
+    ) as connection:
+        count = int(connection.execute(
+            "SELECT COUNT(*) FROM ths_board_daily WHERE trade_date=?", (as_of,),
+        ).fetchone()[0])
+        metadata = connection.execute(
+            "SELECT value FROM supplemental_metadata "
+            "WHERE key='board_source_version'"
+        ).fetchone()
+    if count < BOARD_DAILY_MINIMUM_ROWS:
+        raise ValueError("existing board readiness coverage mismatch")
+    if metadata is None or str(metadata[0]) != source_version:
+        raise ValueError("existing board readiness source version mismatch")
 
 
 if __name__ == "__main__":

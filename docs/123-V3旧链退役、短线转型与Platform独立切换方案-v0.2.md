@@ -176,7 +176,7 @@ X轴以百分位50分高低，Y轴以0分资源增加或减少。相对强弱的
 
 未满足完整组合时只展示事实，不强行归类；输入不足显示`unknown`。这些词是展示描述，不是Evidence或交易判断。
 
-四象限上游为Platform行业事实，消费者仅为V4 Daily Review和Attribution。由现有Daily Review/Finalizer触发，不建立独立调度器。
+四象限上游为Platform行业事实，当前消费者仅为独立的V4市场认知卡和用户人工阅读；不进入Daily Review决策或自动Attribution。由`com.yplus.yifei-v4.market-cognition`在Platform行业任务及兜底完成后触发，不经过Hermes或LLM。
 
 ## 7. 推进方式
 
@@ -242,7 +242,7 @@ X轴以百分位50分高低，Y轴以0分资源增加或减少。相对强弱的
 
 消费者：V4 Daily Review和Attribution。
 
-触发：V4现有Daily Review/Finalizer，不新增调度。
+触发：工作日22:40的V4市场认知LaunchAgent，排在Platform行业任务21:10及22:10兜底之后；Hermes不参与调度。
 
 约束：只展示和研究，不影响Decision、状态、评分或排序。
 
