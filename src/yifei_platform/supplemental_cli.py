@@ -18,6 +18,11 @@ from .board_daily_ingestion import (
     BOARD_DAILY_SOURCE_VERSION,
     sync_board_daily_v1,
 )
+from .sector_market_ingestion import (
+    MINIMUM_SECTOR_COUNT,
+    SECTOR_MARKET_SOURCE_VERSION,
+    publish_sector_market_daily_v1,
+)
 from .readiness import ReadinessMarkerV1, ReadinessStoreV1
 from .public_data_ingestion import (
     CAPITAL_SOURCE_VERSION,
@@ -76,6 +81,16 @@ def main() -> int:
         "--source-version", default=BOARD_DAILY_SOURCE_VERSION,
     )
     board_daily.add_argument("--readiness-root", type=Path)
+
+    sector_market = subparsers.add_parser("publish-sector-market-daily")
+    sector_market.add_argument("--market-db", type=Path, required=True)
+    sector_market.add_argument("--target-db", type=Path, required=True)
+    sector_market.add_argument("--as-of", required=True)
+    sector_market.add_argument("--published-at", required=True)
+    sector_market.add_argument(
+        "--source-version", default=SECTOR_MARKET_SOURCE_VERSION,
+    )
+    sector_market.add_argument("--readiness-root", type=Path)
 
     backfill = subparsers.add_parser("backfill-tushare")
     backfill.add_argument("--market-db", type=Path, required=True)
@@ -252,6 +267,33 @@ def main() -> int:
                 published_at=args.fetched_at,
                 source_version=result.source_version,
                 synced_session_count=result.synced_session_count,
+            )
+            payload["readiness_marker_id"] = marker.marker_id
+    elif args.command == "publish-sector-market-daily":
+        result = publish_sector_market_daily_v1(
+            market_database_path=args.market_db,
+            target_path=args.target_db,
+            as_of=args.as_of,
+            published_at=args.published_at,
+            source_version=args.source_version,
+        )
+        payload = {
+            "dataset": "sector_market_daily",
+            "first_published_date": result.first_published_date,
+            "inserted_row_count": result.inserted_row_count,
+            "latest_available_as_of": result.latest_available_as_of,
+            "published_session_count": result.published_session_count,
+            "source_version": result.source_version,
+            "target_path": str(result.target_path),
+        }
+        if args.readiness_root:
+            marker = _publish_sector_market_readiness(
+                database_path=result.target_path,
+                readiness_root=args.readiness_root,
+                as_of=result.latest_available_as_of,
+                published_at=args.published_at,
+                source_version=result.source_version,
+                published_session_count=result.published_session_count,
             )
             payload["readiness_marker_id"] = marker.marker_id
     elif args.command == "backfill-tushare":
@@ -614,6 +656,45 @@ def _publish_board_readiness(
         source_versions={"ths_board_daily": source_version},
         dataset_coverages={"ths_board_daily": None},
         bundle="v4-research-board",
+    )
+
+
+def _publish_sector_market_readiness(
+    *, database_path: Path, readiness_root: Path, as_of: str,
+    published_at: str, source_version: str, published_session_count: int,
+) -> ReadinessMarkerV1:
+    if published_session_count == 0:
+        existing = ReadinessStoreV1(readiness_root).read_ready(
+            bundle="v4-market-sector", as_of=as_of,
+        )
+        if existing is not None:
+            if (
+                existing.bundle != "v4-market-sector"
+                or existing.as_of != as_of
+                or existing.producer_version != SUPPLEMENTAL_SCHEMA_VERSION
+                or tuple(existing.required_datasets) != ("sector_market_daily",)
+            ):
+                raise ValueError("existing sector market readiness contract mismatch")
+            with sqlite3.connect(
+                f"file:{database_path.resolve(strict=True)}?mode=ro", uri=True,
+            ) as connection:
+                count = int(connection.execute(
+                    """SELECT COUNT(*) FROM sector_market_daily
+                       WHERE trade_date=? AND sector_level='THS_L2'
+                         AND source_version=? AND amount_unit='CNY'""",
+                    (as_of, source_version),
+                ).fetchone()[0])
+            if count < MINIMUM_SECTOR_COUNT:
+                raise ValueError("existing sector market readiness coverage mismatch")
+            return existing
+    return publish_supplemental_readiness_v1(
+        database_path=database_path,
+        readiness_root=readiness_root,
+        as_of=as_of,
+        published_at=published_at,
+        source_versions={"sector_market_daily": source_version},
+        dataset_coverages={"sector_market_daily": None},
+        bundle="v4-market-sector",
     )
 
 

@@ -752,6 +752,13 @@ def _require_ready_dataset(
             (as_of, source_version),
             400,
         ),
+        "sector_market_daily": (
+            """SELECT COUNT(*) FROM sector_market_daily
+               WHERE trade_date=? AND sector_level='THS_L2'
+                 AND source_version=? AND amount_unit='CNY'""",
+            (as_of, source_version),
+            80,
+        ),
     }
     if dataset == "ths_board_daily":
         count = connection.execute(
@@ -854,6 +861,25 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_ths_board_daily_date
             ON ths_board_daily(trade_date);
+        CREATE TABLE IF NOT EXISTS sector_market_daily (
+            sector_code TEXT NOT NULL,
+            sector_name TEXT NOT NULL,
+            sector_level TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            member_count INTEGER NOT NULL,
+            observed_member_count INTEGER NOT NULL,
+            equal_weight_return_pct REAL NOT NULL,
+            amount REAL NOT NULL,
+            amount_unit TEXT NOT NULL,
+            coverage REAL NOT NULL,
+            source TEXT NOT NULL,
+            source_version TEXT NOT NULL,
+            membership_source_version TEXT NOT NULL,
+            published_at TEXT NOT NULL,
+            PRIMARY KEY(sector_code, sector_level, trade_date)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sector_market_daily_date
+            ON sector_market_daily(sector_level, trade_date);
         CREATE TABLE IF NOT EXISTS sector_fund_flow_daily (
             trade_date TEXT NOT NULL,
             sector_code TEXT NOT NULL,
