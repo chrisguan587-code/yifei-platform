@@ -10,7 +10,7 @@ from yifei_platform.supplemental_facts import initialize_supplemental_database_v
 
 
 class _Client:
-    def __init__(self, count: int = 80):
+    def __init__(self, count: int = 90):
         self.calls: list[tuple[str, str, str]] = []
         self._boards = tuple(
             {"board_code": f"B{index:03d}", "board_name": f"行业{index}"}
@@ -59,7 +59,7 @@ class BoardDailyIngestionTests(unittest.TestCase):
                 [
                     (f"B{index:03d}", f"行业{index}", "2026-08-20", 99, 101,
                      98, 100, 1, 10, 0)
-                    for index in range(80)
+                    for index in range(90)
                 ],
             )
 
@@ -75,7 +75,7 @@ class BoardDailyIngestionTests(unittest.TestCase):
         )
         self.assertEqual("2026-08-21", result.first_synced_date)
         self.assertEqual(1, result.synced_session_count)
-        self.assertEqual(80, result.inserted_row_count)
+        self.assertEqual(90, result.inserted_row_count)
         with sqlite3.connect(self.target) as connection:
             count = connection.execute(
                 "SELECT COUNT(*) FROM ths_board_daily WHERE trade_date='2026-08-21'"
@@ -83,9 +83,9 @@ class BoardDailyIngestionTests(unittest.TestCase):
             pct_chg = connection.execute(
                 "SELECT pct_chg FROM ths_board_daily WHERE board_code='B000' AND trade_date='2026-08-21'"
             ).fetchone()[0]
-        self.assertEqual(80, count)
+        self.assertEqual(90, count)
         self.assertAlmostEqual(1.0, pct_chg)
-        self.assertEqual(80, len(client.calls))
+        self.assertEqual(90, len(client.calls))
         self.assertTrue(
             all(call[1:] == ("20260820", "20260821") for call in client.calls)
         )
@@ -100,12 +100,12 @@ class BoardDailyIngestionTests(unittest.TestCase):
             repeated_count = connection.execute(
                 "SELECT COUNT(*) FROM ths_board_daily WHERE trade_date='2026-08-21'"
             ).fetchone()[0]
-        self.assertEqual(80, repeated_count)
+        self.assertEqual(90, repeated_count)
 
     def test_rejects_incomplete_board_coverage_without_writing(self):
-        with self.assertRaisesRegex(ValueError, "fewer than 80"):
+        with self.assertRaisesRegex(ValueError, "fewer than 90"):
             sync_board_daily_v1(
-                client=_Client(79), market_database_path=self.market,
+                client=_Client(89), market_database_path=self.market,
                 target_path=self.target, as_of="2026-08-21",
                 fetched_at="2026-08-21T10:30:00+00:00",
             )

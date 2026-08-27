@@ -47,7 +47,7 @@ class BoardDailyLaunchdContractTest(unittest.TestCase):
                 )
                 connection.executemany(
                     "INSERT INTO ths_board_daily VALUES (?)",
-                    (("2026-08-25",) for _ in range(80)),
+                    (("2026-08-25",) for _ in range(90)),
                 )
                 connection.execute(
                     "INSERT INTO supplemental_metadata VALUES (?,?)",
@@ -87,7 +87,7 @@ class BoardDailyLaunchdContractTest(unittest.TestCase):
                 )
                 connection.executemany(
                     "INSERT INTO ths_board_daily VALUES (?)",
-                    (("2026-08-25",) for _ in range(80)),
+                    (("2026-08-25",) for _ in range(90)),
                 )
                 connection.execute(
                     "INSERT INTO supplemental_metadata VALUES (?,?)",

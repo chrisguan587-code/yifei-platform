@@ -18,7 +18,7 @@ from .readiness import ReadinessMarkerV1, ReadinessStoreV1
 
 
 SUPPLEMENTAL_SCHEMA_VERSION = "supplemental-market-facts.v1"
-BOARD_DAILY_MINIMUM_ROWS = 80
+BOARD_DAILY_MINIMUM_ROWS = 90
 
 
 def serialized_supplemental_publication_v1(function):
@@ -758,6 +758,13 @@ def _require_ready_dataset(
                  AND source_version=? AND amount_unit='CNY'""",
             (as_of, source_version),
             80,
+        ),
+        "sector_market_daily_sw_l2": (
+            """SELECT COUNT(*) FROM sector_market_daily
+               WHERE trade_date=? AND sector_level='L2'
+                 AND source_version=? AND amount_unit='CNY'""",
+            (as_of, source_version),
+            120,
         ),
     }
     if dataset == "ths_board_daily":

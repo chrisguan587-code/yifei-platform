@@ -190,7 +190,7 @@ class SupplementalFactsContractTest(unittest.TestCase):
     def test_legacy_ths_membership_migration_is_fixed_and_exact(self) -> None:
         legacy = self.root / "legacy-membership.db"
         target = self.root / "membership-facts.db"
-        board_names = [f"板块{index:03d}" for index in range(80)]
+        board_names = [f"板块{index:03d}" for index in range(90)]
         with sqlite3.connect(target) as connection:
             connection.execute(
                 """CREATE TABLE ths_board_daily (
@@ -227,8 +227,8 @@ class SupplementalFactsContractTest(unittest.TestCase):
             fetched_at="2026-08-22T12:00:00+08:00",
             source_version="v3-ths-stock-industry.2026.v1",
         )
-        self.assertEqual(80, result.stock_count)
-        self.assertEqual(80, result.board_count)
+        self.assertEqual(90, result.stock_count)
+        self.assertEqual(90, result.board_count)
         with sqlite3.connect(target) as connection:
             row = connection.execute(
                 """SELECT sector_code, sector_level, valid_from, source
@@ -238,7 +238,7 @@ class SupplementalFactsContractTest(unittest.TestCase):
                 """SELECT COUNT(*) FROM sector_membership_history
                    WHERE valid_from='2026-01-01' AND sector_level='THS_L2'"""
             ).fetchone()[0]
-        self.assertEqual(80, persisted)
+        self.assertEqual(90, persisted)
         self.assertEqual(
             ("THS_L2:板块000", "THS_L2", "2026-01-01", "v3_snapshot.pywencai"),
             row,

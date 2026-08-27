@@ -8,6 +8,7 @@ import unittest
 
 from yifei_platform.sector_market_ingestion import (
     publish_sector_market_daily_v1,
+    publish_sector_market_daily_v2,
 )
 from yifei_platform.supplemental_facts import (
     initialize_supplemental_database_v1,
@@ -197,6 +198,127 @@ class SectorMarketIngestionTests(unittest.TestCase):
                 target_path=self.target,
                 as_of=self.dates[-1],
                 published_at="2026-07-30T10:00:00+00:00",
+            )
+
+
+class SwSectorMarketIngestionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        root = Path(self.temporary.name)
+        self.market = root / "market.db"
+        self.target = root / "supplemental.db"
+        self.dates = [
+            (date(2026, 7, 1) + timedelta(days=offset)).isoformat()
+            for offset in range(30)
+        ]
+        with sqlite3.connect(self.market) as connection:
+            connection.executescript(
+                """CREATE TABLE trading_calendar (trade_date TEXT PRIMARY KEY);
+                   CREATE TABLE stock_daily (
+                       stock_code TEXT, trade_date TEXT,
+                       pct_chg REAL, amount REAL
+                   );"""
+            )
+            connection.executemany(
+                "INSERT INTO trading_calendar VALUES (?)",
+                ((day,) for day in self.dates),
+            )
+            connection.executemany(
+                "INSERT INTO stock_daily VALUES (?,?,?,?)",
+                (
+                    (f"S{index:03d}", day, index / 100, 1_000.0)
+                    for day in self.dates for index in range(131)
+                ),
+            )
+        initialize_supplemental_database_v1(self.target)
+        with sqlite3.connect(self.target) as connection:
+            connection.executemany(
+                """INSERT INTO sector_membership_history (
+                       stock_code,stock_name,sector_code,sector_name,
+                       sector_level,valid_from,valid_to_exclusive,
+                       source,source_version,fetched_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    (
+                        f"S{index:03d}", f"股票{index}", f"SW{index:03d}",
+                        f"申万行业{index}", "L2", "2026-01-01", None,
+                        "test-cninfo", "test-cninfo-sw-l2.v1",
+                        "2026-07-01T00:00:00+00:00",
+                    )
+                    for index in range(131)
+                ),
+            )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_publishes_sw_l2_v2_with_market_amount_coverage(self) -> None:
+        result = publish_sector_market_daily_v2(
+            market_database_path=self.market,
+            target_path=self.target,
+            as_of=self.dates[-1],
+            published_at="2026-07-30T10:00:00+00:00",
+        )
+        self.assertEqual("L2", result.sector_level)
+        self.assertEqual(2_620, result.inserted_row_count)
+        self.assertEqual(1.0, result.market_amount_coverage)
+        with sqlite3.connect(self.target) as connection:
+            count, versions = connection.execute(
+                """SELECT COUNT(*),COUNT(DISTINCT source_version)
+                   FROM sector_market_daily WHERE sector_level='L2'"""
+            ).fetchone()
+        self.assertEqual((2_620, 1), (count, versions))
+
+        repeated = publish_sector_market_daily_v2(
+            market_database_path=self.market,
+            target_path=self.target,
+            as_of=self.dates[-1],
+            published_at="2026-07-30T10:01:00+00:00",
+        )
+        self.assertEqual(0, repeated.inserted_row_count)
+        self.assertEqual(1.0, repeated.market_amount_coverage)
+
+    def test_rejects_market_amount_coverage_below_97_percent(self) -> None:
+        with sqlite3.connect(self.target) as connection:
+            connection.execute(
+                """DELETE FROM sector_membership_history
+                   WHERE sector_level='L2' AND stock_code<'S005'"""
+            )
+        with self.assertRaisesRegex(
+            ValueError, "market amount coverage below 0.97"
+        ):
+            publish_sector_market_daily_v2(
+                market_database_path=self.market,
+                target_path=self.target,
+                as_of=self.dates[-1],
+                published_at="2026-07-30T10:00:00+00:00",
+            )
+        with sqlite3.connect(self.target) as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM sector_market_daily"
+            ).fetchone()[0]
+        self.assertEqual(0, count)
+
+    def test_repeated_run_rechecks_market_amount_coverage(self) -> None:
+        publish_sector_market_daily_v2(
+            market_database_path=self.market,
+            target_path=self.target,
+            as_of=self.dates[-1],
+            published_at="2026-07-30T10:00:00+00:00",
+        )
+        with sqlite3.connect(self.market) as connection:
+            connection.execute(
+                "INSERT INTO stock_daily VALUES (?,?,?,?)",
+                ("UNMAPPED", self.dates[-1], 0.0, 10_000.0),
+            )
+        with self.assertRaisesRegex(
+            ValueError, "market amount coverage below 0.97"
+        ):
+            publish_sector_market_daily_v2(
+                market_database_path=self.market,
+                target_path=self.target,
+                as_of=self.dates[-1],
+                published_at="2026-07-30T10:01:00+00:00",
             )
 
 
