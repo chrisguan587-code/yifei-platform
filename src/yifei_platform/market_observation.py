@@ -160,6 +160,29 @@ def initialize_market_observation_schema_v1(
     _create_schema(connection)
 
 
+def append_missing_index_fact_v1(
+    connection: sqlite3.Connection,
+    *,
+    as_of: str,
+    index_row: Mapping[str, object],
+    index_source_version: str,
+) -> None:
+    if not connection.in_transaction:
+        raise ValueError("missing index append requires an active transaction")
+    existing = connection.execute(
+        "SELECT 1 FROM index_daily WHERE index_code=? AND trade_date=?",
+        (CSI300_CODE, as_of),
+    ).fetchone()
+    if existing is not None:
+        raise ValueError("CSI 300 exact-date fact already exists")
+    _append_index_row(
+        connection,
+        as_of=as_of,
+        raw=index_row,
+        source_version=index_source_version,
+    )
+
+
 def _create_schema(connection: sqlite3.Connection) -> None:
     connection.executescript("""
         CREATE TABLE IF NOT EXISTS index_daily (

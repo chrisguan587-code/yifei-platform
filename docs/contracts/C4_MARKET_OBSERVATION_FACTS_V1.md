@@ -40,6 +40,12 @@ one-day partial history. A missing index row degrades market observation
 quality but does not block migration or `v4-market-core`, whose required
 dataset remains `stock_daily`.
 
+The same Platform-owned production wrapper may invoke the explicitly bounded
+`index-daily-missing-only-correction.v1` writer after normal publication. This
+writer only inserts an absent exact-date CSI 300 fact and its correction audit
+row. It cannot overwrite an index fact or mutate stock, breadth, calendar,
+publication metadata, or immutable readiness history.
+
 ## Consumers and constraints
 
 Consumers are V4 Market Observation and Attribution. V4 reads these tables

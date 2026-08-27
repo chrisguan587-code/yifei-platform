@@ -7,10 +7,16 @@ import unittest
 
 from yifei_platform.daily_market import (
     DailyMarketQualityPolicyV1,
+    INDEX_MISSING_CORRECTION_VERSION,
+    TencentCsi300SnapshotClientV1,
+    correct_missing_csi300_index_v1,
     publish_platform_daily_market_data,
+    repair_recent_missing_csi300_v1,
 )
+from unittest.mock import patch
 from yifei_platform.bootstrap import load_market_metadata, load_trading_sessions
 from yifei_platform.market_observation import (
+    append_missing_index_fact_v1,
     append_market_observation_facts_v1,
     initialize_market_observation_schema_v1,
 )
@@ -140,6 +146,100 @@ class PlatformDailyMarketPublisherTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "explicit correction"):
             self._publish(changed, published_at="2026-08-25T20:00:00+08:00")
         self.assertEqual(original, self.target.read_bytes())
+
+    def test_missing_only_index_correction_preserves_frozen_market_facts(self) -> None:
+        self._publish(self._rows())
+        with sqlite3.connect(self.target) as connection:
+            protected_before = {
+                table: connection.execute(f"SELECT * FROM {table}").fetchall()
+                for table in (
+                    "stock_daily", "market_breadth_daily",
+                    "trading_calendar", "platform_metadata",
+                )
+            }
+
+        corrected = correct_missing_csi300_index_v1(
+            target_path=self.target,
+            as_of="2026-08-25",
+            corrected_at="2026-08-25T19:00:00+08:00",
+            index_client=StubIndexClient(),
+        )
+
+        self.assertTrue(corrected)
+        with sqlite3.connect(self.target) as connection:
+            for table, expected in protected_before.items():
+                self.assertEqual(
+                    expected, connection.execute(f"SELECT * FROM {table}").fetchall()
+                )
+            index = connection.execute(
+                "SELECT close,source_version FROM index_daily WHERE trade_date=?",
+                ("2026-08-25",),
+            ).fetchone()
+            audit = connection.execute(
+                "SELECT contract_version,fact_key FROM platform_fact_corrections"
+            ).fetchone()
+        self.assertEqual((4030.0, "stub-csi300.v1"), index)
+        self.assertEqual(
+            (INDEX_MISSING_CORRECTION_VERSION, "000300.SH:2026-08-25"), audit
+        )
+        self.assertFalse(correct_missing_csi300_index_v1(
+            target_path=self.target,
+            as_of="2026-08-25",
+            corrected_at="2026-08-25T20:00:00+08:00",
+            index_client=StubIndexClient(),
+        ))
+
+    def test_recent_repair_only_attempts_missing_sessions(self) -> None:
+        self._publish(self._rows())
+        result = repair_recent_missing_csi300_v1(
+            target_path=self.target,
+            corrected_at="2026-08-25T19:00:00+08:00",
+            client_factory=StubIndexClient,
+            lookback_sessions=2,
+        )
+        self.assertEqual(("2026-08-24", "2026-08-25"), result["corrected"])
+        self.assertEqual((), result["failed"])
+
+    def test_tencent_index_quote_units_and_date_are_validated(self) -> None:
+        fields = [""] * 70
+        fields[2] = "000300"
+        fields[3] = "4030"
+        fields[4] = "4000"
+        fields[5] = "4010"
+        fields[6] = "1000"
+        fields[30] = "20260825161413"
+        fields[33] = "4050"
+        fields[34] = "3980"
+        fields[37] = "2000"
+        payload = f'v_sh000300="{"~".join(fields)}";'.encode("gbk")
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return payload
+
+        with patch("urllib.request.urlopen", return_value=Response()):
+            row = TencentCsi300SnapshotClientV1().fetch(as_of="2026-08-25")
+        self.assertEqual(100_000.0, row["volume"])
+        self.assertEqual(20_000_000.0, row["amount"])
+        with patch("urllib.request.urlopen", return_value=Response()):
+            with self.assertRaisesRegex(RuntimeError, "row missing"):
+                TencentCsi300SnapshotClientV1().fetch(as_of="2026-08-26")
+
+    def test_missing_index_primitive_requires_caller_transaction(self) -> None:
+        with sqlite3.connect(self.target) as connection:
+            with self.assertRaisesRegex(ValueError, "active transaction"):
+                append_missing_index_fact_v1(
+                    connection,
+                    as_of="2026-08-24",
+                    index_row=StubIndexClient().fetch(as_of="2026-08-24"),
+                    index_source_version="stub-csi300.v1",
+                )
 
     def test_partial_duplicate_invalid_or_older_snapshot_never_changes_target(self) -> None:
         cases = (

@@ -4,10 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
+from .bootstrap import _sha256
 from .daily_market import (
-    AkshareCsi300DailyClientV1,
+    PlatformCsi300DailyClientV1,
     PlatformDailySnapshotClientV1,
     publish_platform_daily_market_data,
+    repair_recent_missing_csi300_v1,
 )
 
 
@@ -26,11 +28,17 @@ def main() -> int:
         readiness_root=args.readiness_root,
         as_of=args.as_of,
         published_at=args.published_at,
-        index_client=AkshareCsi300DailyClientV1(),
+        index_client=PlatformCsi300DailyClientV1(),
+    )
+    corrections = repair_recent_missing_csi300_v1(
+        target_path=args.target_db,
+        corrected_at=args.published_at,
+        client_factory=PlatformCsi300DailyClientV1,
     )
     print(json.dumps({
         "as_of": result.as_of,
-        "database_sha256": result.database_sha256,
+        "index_corrections": corrections,
+        "database_sha256": _sha256(args.target_db),
         "readiness_marker_id": result.readiness_marker.marker_id,
         "row_count": result.row_count,
         "session_count": result.session_count,

@@ -65,6 +65,26 @@ The first publication for a date freezes its normalized rows and
 identical. Different same-day content requires a future explicit correction
 contract; V1 never silently rewrites it.
 
+### Missing-only CSI 300 correction V1
+
+`index-daily-missing-only-correction.v1` is the sole exception to the freeze.
+It may append the exact-date `000300.SH` row only when that primary key is
+absent and the date is already a published Platform trading session. It must:
+
+- never update or delete an existing `index_daily` row;
+- never change `stock_daily`, `market_breadth_daily`, `trading_calendar`, or
+  the original publication metadata/readiness marker;
+- validate the vendor date, positive close, database integrity, and unchanged
+  protected-table row counts before atomic replacement;
+- append an audit row containing correction contract, fact key, timestamp,
+  and source version.
+
+An existing index row is an explicit no-op. Different content for an existing
+row remains forbidden and requires a new correction contract. The production
+wrapper may run this missing-only repair for recent published sessions after
+the normal daily publication, so a source that becomes complete later can
+repair a degraded optional fact without rewriting the frozen market snapshot.
+
 ## Readiness and failure semantics
 
 After successful replacement, Platform publishes immutable

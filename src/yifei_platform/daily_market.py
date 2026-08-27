@@ -12,7 +12,7 @@ import shutil
 import sqlite3
 import tempfile
 import time
-from typing import Mapping, Protocol, Sequence
+from typing import Callable, Mapping, Protocol, Sequence
 import urllib.request
 
 from .bootstrap import (
@@ -22,6 +22,8 @@ from .bootstrap import (
     load_market_metadata,
 )
 from .market_observation import (
+    CSI300_CODE,
+    append_missing_index_fact_v1,
     append_market_observation_facts_v1,
     initialize_market_observation_schema_v1,
 )
@@ -31,6 +33,7 @@ from .readiness import ReadinessStoreV1
 
 PLATFORM_DAILY_MARKET_VERSION = "platform-daily-market.v2"
 PLATFORM_DAILY_SCHEMA_VERSION = "market-data.platform-daily.v2"
+INDEX_MISSING_CORRECTION_VERSION = "index-daily-missing-only-correction.v1"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -169,6 +172,176 @@ class AkshareCsi300DailyClientV1:
             if row_date == as_of:
                 return {**row, "date": row_date}
         raise RuntimeError(f"CSI 300 daily row missing for {as_of}")
+
+
+class TencentCsi300SnapshotClientV1:
+    source_version = "tencent.csi300-quote.v1"
+
+    def fetch(self, *, as_of: str) -> Mapping[str, object]:
+        request = urllib.request.Request(
+            "http://qt.gtimg.cn/q=sh000300",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=8) as response:
+                payload = response.read().decode("gbk", errors="ignore")
+        except OSError as exc:
+            raise RuntimeError("Tencent CSI 300 quote failed") from exc
+        return _parse_tencent_csi300(payload, as_of)
+
+
+class PlatformCsi300DailyClientV1:
+    """Prefer the exact-date closing quote; retain delayed history fallback."""
+
+    def __init__(self) -> None:
+        self.source_version = "not-fetched"
+
+    def fetch(self, *, as_of: str) -> Mapping[str, object]:
+        primary = TencentCsi300SnapshotClientV1()
+        try:
+            row = primary.fetch(as_of=as_of)
+            self.source_version = primary.source_version
+            return row
+        except RuntimeError:
+            fallback = AkshareCsi300DailyClientV1()
+            row = fallback.fetch(as_of=as_of)
+            self.source_version = fallback.source_version
+            return row
+
+
+def correct_missing_csi300_index_v1(
+    *,
+    target_path: Path,
+    as_of: str,
+    corrected_at: str,
+    index_client: DailyIndexSnapshotClientV1,
+) -> bool:
+    """Append one absent CSI 300 fact without rewriting frozen market facts."""
+    requested = date.fromisoformat(as_of).isoformat()
+    timestamp = datetime.fromisoformat(corrected_at.replace("Z", "+00:00"))
+    if timestamp.utcoffset() is None:
+        raise ValueError("corrected_at must include a timezone")
+    if requested > timestamp.date().isoformat():
+        raise ValueError("as_of cannot be after corrected_at")
+    target = target_path.resolve(strict=True)
+    with sqlite3.connect(f"{target.as_uri()}?mode=ro", uri=True) as connection:
+        session = connection.execute(
+            "SELECT 1 FROM trading_calendar WHERE trade_date=?", (requested,)
+        ).fetchone()
+        existing = connection.execute(
+            "SELECT 1 FROM index_daily WHERE index_code=? AND trade_date=?",
+            (CSI300_CODE, requested),
+        ).fetchone()
+    if session is None:
+        raise ValueError(f"not a published Platform session: {requested}")
+    if existing is not None:
+        return False
+    index_row = index_client.fetch(as_of=requested)
+
+    with _publication_lock(target_path):
+        protected_before = _protected_table_counts(target)
+        with sqlite3.connect(f"{target.as_uri()}?mode=ro", uri=True) as connection:
+            session = connection.execute(
+                "SELECT 1 FROM trading_calendar WHERE trade_date=?", (requested,)
+            ).fetchone()
+            existing = connection.execute(
+                "SELECT 1 FROM index_daily WHERE index_code=? AND trade_date=?",
+                (CSI300_CODE, requested),
+            ).fetchone()
+        if session is None:
+            raise ValueError(f"not a published Platform session: {requested}")
+        if existing is not None:
+            return False
+
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            shutil.copy2(target, temporary)
+            with sqlite3.connect(temporary) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                append_missing_index_fact_v1(
+                    connection,
+                    as_of=requested,
+                    index_row=index_row,
+                    index_source_version=index_client.source_version,
+                )
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS platform_fact_corrections (
+                        correction_id TEXT PRIMARY KEY,
+                        contract_version TEXT NOT NULL,
+                        dataset TEXT NOT NULL,
+                        fact_key TEXT NOT NULL,
+                        corrected_at TEXT NOT NULL,
+                        source_version TEXT NOT NULL
+                    )
+                """)
+                connection.execute(
+                    "INSERT INTO platform_fact_corrections VALUES (?,?,?,?,?,?)",
+                    (
+                        f"{INDEX_MISSING_CORRECTION_VERSION}:{CSI300_CODE}:{requested}",
+                        INDEX_MISSING_CORRECTION_VERSION,
+                        "index_daily",
+                        f"{CSI300_CODE}:{requested}",
+                        corrected_at,
+                        index_client.source_version,
+                    ),
+                )
+                connection.commit()
+            _validate_missing_index_correction(
+                temporary, requested, protected_before
+            )
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return True
+
+
+def repair_recent_missing_csi300_v1(
+    *,
+    target_path: Path,
+    corrected_at: str,
+    client_factory: Callable[[], DailyIndexSnapshotClientV1],
+    lookback_sessions: int = 5,
+) -> dict[str, tuple[str, ...]]:
+    if lookback_sessions <= 0:
+        raise ValueError("lookback_sessions must be positive")
+    target = target_path.resolve(strict=True)
+    uri = f"{target.as_uri()}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as connection:
+        missing = tuple(str(row[0]) for row in connection.execute(
+            """SELECT calendar.trade_date
+                 FROM (
+                     SELECT trade_date FROM trading_calendar
+                     ORDER BY trade_date DESC LIMIT ?
+                 ) AS calendar
+                 LEFT JOIN index_daily AS idx
+                   ON idx.index_code=? AND idx.trade_date=calendar.trade_date
+                WHERE idx.trade_date IS NULL
+                ORDER BY calendar.trade_date""",
+            (lookback_sessions, CSI300_CODE),
+        ))
+    corrected: list[str] = []
+    failed: list[str] = []
+    for session in missing:
+        try:
+            if correct_missing_csi300_index_v1(
+                target_path=target_path,
+                as_of=session,
+                corrected_at=corrected_at,
+                index_client=client_factory(),
+            ):
+                corrected.append(session)
+        except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+            LOGGER.warning(
+                "CSI 300 missing-only correction failed for %s: %s",
+                session,
+                exc,
+            )
+            failed.append(session)
+    return {"corrected": tuple(corrected), "failed": tuple(failed)}
 
 
 def publish_platform_daily_market_data(
@@ -609,6 +782,72 @@ def _parse_tencent_line(line: str, as_of: str) -> dict[str, object] | None:
         if isinstance(exc, ValueError) and "date mismatch" in str(exc):
             raise
         return None
+
+
+def _parse_tencent_csi300(payload: str, as_of: str) -> dict[str, object]:
+    try:
+        fields = payload.split("=", 1)[1].strip().strip('\";').split("~")
+        if len(fields) < 38 or fields[2] != "000300":
+            raise ValueError("unexpected Tencent CSI 300 payload")
+        provider_timestamp = fields[30]
+        if provider_timestamp[:8] != as_of.replace("-", ""):
+            raise RuntimeError(f"Tencent CSI 300 row missing for {as_of}")
+        close = float(fields[3])
+        preclose = float(fields[4])
+        open_price = float(fields[5])
+        high = float(fields[33])
+        low = float(fields[34])
+        volume = float(fields[6]) * 100
+        amount = float(fields[37]) * 10_000
+    except RuntimeError:
+        raise
+    except (IndexError, ValueError) as exc:
+        raise RuntimeError("invalid Tencent CSI 300 payload") from exc
+    if min(close, preclose, open_price, high, low) <= 0 or volume < 0 or amount < 0:
+        raise RuntimeError("invalid Tencent CSI 300 values")
+    return {
+        "date": as_of,
+        "open": open_price,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+        "amount": amount,
+    }
+
+
+def _protected_table_counts(path: Path) -> dict[str, int]:
+    uri = f"{path.resolve().as_uri()}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as connection:
+        return {
+            table: int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in (
+                "stock_daily",
+                "market_breadth_daily",
+                "trading_calendar",
+                "platform_metadata",
+            )
+        }
+
+
+def _validate_missing_index_correction(
+    path: Path, as_of: str, protected_before: dict[str, int]
+) -> None:
+    with sqlite3.connect(path) as connection:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        index_count = int(connection.execute(
+            "SELECT COUNT(*) FROM index_daily WHERE index_code=? AND trade_date=?",
+            (CSI300_CODE, as_of),
+        ).fetchone()[0])
+        audit_count = int(connection.execute(
+            "SELECT COUNT(*) FROM platform_fact_corrections "
+            "WHERE correction_id=?",
+            (f"{INDEX_MISSING_CORRECTION_VERSION}:{CSI300_CODE}:{as_of}",),
+        ).fetchone()[0])
+    if integrity != "ok" or index_count != 1 or audit_count != 1:
+        raise ValueError("missing-index correction validation failed")
+    if _protected_table_counts(path) != protected_before:
+        raise ValueError("missing-index correction changed protected table counts")
 
 
 def _number(value: object, label: str, code: str) -> float:

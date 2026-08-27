@@ -10,7 +10,11 @@ Platform database, derives neutral market breadth, appends the available CSI
 300 daily row, publishes `v4-market-core` readiness, and has no V3 path or
 module dependency. Sina supplies whole-market discovery; a bounded Tencent
 fallback can cover only the prior known universe and is reported as degraded
-universe discovery. See
+universe discovery. Tencent supplies the exact-date CSI 300 closing quote with
+the delayed Sina history endpoint as fallback. After the normal publication,
+the same command repairs absent CSI 300 facts in the five most recent sessions
+under `index-daily-missing-only-correction.v1`; existing facts and frozen stock,
+breadth, calendar, metadata, and readiness records cannot be rewritten. See
 [`C3_PLATFORM_DAILY_MARKET_PUBLISHER_V1.md`](./docs/contracts/C3_PLATFORM_DAILY_MARKET_PUBLISHER_V1.md).
 The observation fact contract is defined in
 [`C4_MARKET_OBSERVATION_FACTS_V1.md`](./docs/contracts/C4_MARKET_OBSERVATION_FACTS_V1.md).
