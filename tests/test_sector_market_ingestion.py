@@ -260,14 +260,15 @@ class SwSectorMarketIngestionTests(unittest.TestCase):
             published_at="2026-07-30T10:00:00+00:00",
         )
         self.assertEqual("L2", result.sector_level)
-        self.assertEqual(2_620, result.inserted_row_count)
+        self.assertEqual(25, result.published_session_count)
+        self.assertEqual(3_275, result.inserted_row_count)
         self.assertEqual(1.0, result.market_amount_coverage)
         with sqlite3.connect(self.target) as connection:
             count, versions = connection.execute(
                 """SELECT COUNT(*),COUNT(DISTINCT source_version)
                    FROM sector_market_daily WHERE sector_level='L2'"""
             ).fetchone()
-        self.assertEqual((2_620, 1), (count, versions))
+        self.assertEqual((3_275, 1), (count, versions))
 
         repeated = publish_sector_market_daily_v2(
             market_database_path=self.market,
@@ -298,6 +299,22 @@ class SwSectorMarketIngestionTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM sector_market_daily"
             ).fetchone()[0]
         self.assertEqual(0, count)
+
+    def test_rejects_supporting_history_amount_coverage_below_90_percent(self) -> None:
+        with sqlite3.connect(self.market) as connection:
+            connection.execute(
+                "INSERT INTO stock_daily VALUES (?,?,?,?)",
+                ("UNMAPPED", self.dates[-25], 0.0, 20_000.0),
+            )
+        with self.assertRaisesRegex(
+            ValueError, "market amount coverage below 0.90"
+        ):
+            publish_sector_market_daily_v2(
+                market_database_path=self.market,
+                target_path=self.target,
+                as_of=self.dates[-1],
+                published_at="2026-07-30T10:00:00+00:00",
+            )
 
     def test_repeated_run_rechecks_market_amount_coverage(self) -> None:
         publish_sector_market_daily_v2(

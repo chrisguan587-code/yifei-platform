@@ -154,7 +154,7 @@ from .outcomes import (
     PriceLineageGuardV2,
 )
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     "BOOTSTRAP_VERSION",

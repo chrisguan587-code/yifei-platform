@@ -28,7 +28,7 @@ class SectorMarketLaunchdContractTests(unittest.TestCase):
         self.assertIn("stock_daily", script)
         self.assertIn("market_breadth_daily", script)
         self.assertIn('while [ "$attempt" -lt 480 ]', script)
-        self.assertIn("publish-sector-market-daily", script)
+        self.assertIn("publish-sector-market-daily-v2", script)
 
 
 if __name__ == "__main__":

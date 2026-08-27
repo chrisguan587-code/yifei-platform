@@ -65,7 +65,7 @@ fi
 
 PUBLISHED_AT="$(date -u '+%Y-%m-%dT%H:%M:%S+00:00')"
 exec "$root/.venv/bin/yifei-platform-supplemental" \
-  publish-sector-market-daily \
+  publish-sector-market-daily-v2 \
   --market-db "$1" \
   --target-db "$2" \
   --readiness-root "$3" \
