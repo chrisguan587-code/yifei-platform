@@ -64,10 +64,27 @@ if [ "$attempt" -ge 480 ]; then
 fi
 
 PUBLISHED_AT="$(date -u '+%Y-%m-%dT%H:%M:%S+00:00')"
-exec "$root/.venv/bin/yifei-platform-supplemental" \
+status=0
+
+"$root/.venv/bin/yifei-platform-supplemental" \
+  publish-sector-market-daily \
+  --market-db "$1" \
+  --target-db "$2" \
+  --readiness-root "$3" \
+  --as-of "$AS_OF" \
+  --published-at "$PUBLISHED_AT" || status=$?
+
+"$root/.venv/bin/yifei-platform-supplemental" \
   publish-sector-market-daily-v2 \
   --market-db "$1" \
   --target-db "$2" \
   --readiness-root "$3" \
   --as-of "$AS_OF" \
-  --published-at "$PUBLISHED_AT"
+  --published-at "$PUBLISHED_AT" || {
+    next_status=$?
+    if [ "$status" -eq 0 ]; then
+      status=$next_status
+    fi
+  }
+
+exit "$status"

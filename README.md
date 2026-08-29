@@ -91,6 +91,9 @@ Implemented public contracts:
 - `StockCapitalFactReaderV1`, `SectorMembershipReaderV1`, and
   `calculate_sector_strength_v1`: unit-safe vendor capital facts, PIT sector
   membership, and neutral sector breadth facts.
+- `concept_membership.run_concept_update` and
+  `concept_membership.resolve_concept_snapshot`: weekly immutable
+  THS concept membership publication and freshness-bounded read-only access.
 
 Contract semantics and compatibility rules are documented in [A1_CALENDAR_MARKET_DATA_V1.md](./docs/contracts/A1_CALENDAR_MARKET_DATA_V1.md).
 Quality and atomic publication semantics are documented in [A2_QUALITY_READINESS_V1.md](./docs/contracts/A2_QUALITY_READINESS_V1.md).
@@ -98,6 +101,16 @@ Artifact and outcome semantics are documented in [A3_ARTIFACT_OUTCOME_V1.md](./d
 B1 fact boundaries are documented in [B1_ELIGIBILITY_BOARD_CAPITAL_V1.md](./docs/contracts/B1_ELIGIBILITY_BOARD_CAPITAL_V1.md).
 B2 supplemental fact boundaries and quality gates are documented in
 [B2_SUPPLEMENTAL_CAPITAL_SECTOR_FACTS_V1.md](./docs/contracts/B2_SUPPLEMENTAL_CAPITAL_SECTOR_FACTS_V1.md).
+Shared concept membership ownership is documented in
+[B6_SHARED_CONCEPT_MEMBERSHIP_V1.md](./docs/contracts/B6_SHARED_CONCEPT_MEMBERSHIP_V1.md).
+
+The weekly shared concept snapshot can also be published manually:
+
+```bash
+yifei-platform-publish-concepts \
+  --exchange-calendar /path/to/exchange_calendar/sse-2026.v1.json \
+  --output-root /path/to/data/shared/concepts
+```
 
 Supplemental facts are published independently from the transitional market
 database:

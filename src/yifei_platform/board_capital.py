@@ -38,11 +38,31 @@ class SectorCapitalFactV1:
 
 
 @dataclass(frozen=True)
+class SectorMarketDailyFactV1:
+    sector_code: str
+    sector_name: str
+    sector_level: str
+    trade_date: str
+    member_count: int
+    observed_member_count: int
+    equal_weight_return_pct: float
+    amount: float
+    amount_unit: str
+    coverage: float
+    source: str
+    source_version: str
+    membership_source_version: str
+    published_at: str
+
+
+@dataclass(frozen=True)
 class FactReadResultV1:
     status: ReadStatus
     dataset: str
     as_of: str
-    facts: tuple[BoardDailyFactV1 | SectorCapitalFactV1, ...]
+    facts: tuple[
+        BoardDailyFactV1 | SectorCapitalFactV1 | SectorMarketDailyFactV1, ...
+    ]
     latest_available_as_of: str | None
     source_version: str
     schema_version: str
@@ -113,6 +133,60 @@ class CapitalFactReaderV1:
         )
 
 
+class SectorMarketFactReaderV1:
+    schema_version = "sector-market-daily-facts.v1"
+
+    def __init__(
+        self, database_path: Path, *, sector_level: str, source_version: str,
+    ):
+        if not sector_level.strip():
+            raise ValueError("sector_level is required")
+        self._sector_level = sector_level
+        self._reader = _FactTableReader(database_path, source_version)
+
+    def read_daily(self, as_of: str) -> FactReadResultV1:
+        fields = (
+            "sector_code", "sector_name", "sector_level", "trade_date",
+            "member_count", "observed_member_count",
+            "equal_weight_return_pct", "amount", "amount_unit", "coverage",
+            "source", "source_version", "membership_source_version",
+            "published_at",
+        )
+        return self._reader.read(
+            table="sector_market_daily",
+            dataset=f"sector_market_daily_{self._sector_level.lower()}",
+            as_of=as_of,
+            fields=fields,
+            required=set(fields),
+            schema_version=self.schema_version,
+            factory=lambda row: SectorMarketDailyFactV1(
+                sector_code=str(row["sector_code"]),
+                sector_name=str(row["sector_name"]),
+                sector_level=str(row["sector_level"]),
+                trade_date=str(row["trade_date"]),
+                member_count=int(row["member_count"]),
+                observed_member_count=int(row["observed_member_count"]),
+                equal_weight_return_pct=float(
+                    row["equal_weight_return_pct"]
+                ),
+                amount=float(row["amount"]),
+                amount_unit=str(row["amount_unit"]),
+                coverage=float(row["coverage"]),
+                source=str(row["source"]),
+                source_version=str(row["source_version"]),
+                membership_source_version=str(
+                    row["membership_source_version"]
+                ),
+                published_at=str(row["published_at"]),
+            ),
+            order_by="sector_code",
+            filters={
+                "sector_level": self._sector_level,
+                "source_version": self._reader.source_version,
+            },
+        )
+
+
 class _FactTableReader:
     def __init__(self, database_path: Path, source_version: str):
         if not source_version.strip():
@@ -120,36 +194,57 @@ class _FactTableReader:
         self._database_path = database_path
         self._source_version = source_version
 
-    def read(self, *, table: str, as_of: str, fields: tuple[str, ...], required: set[str], schema_version: str, factory, order_by: str) -> FactReadResultV1:
+    @property
+    def source_version(self) -> str:
+        return self._source_version
+
+    def read(
+        self, *, table: str, as_of: str, fields: tuple[str, ...],
+        required: set[str], schema_version: str, factory, order_by: str,
+        dataset: str | None = None, filters: dict[str, str] | None = None,
+    ) -> FactReadResultV1:
         from datetime import date
 
         requested = date.fromisoformat(as_of).isoformat()
+        dataset_name = dataset or table
+        active_filters = dict(filters or {})
         if not self._database_path.is_file():
-            return self._result(ReadStatus.MISSING, table, requested, schema_version, reasons=("database_missing",))
+            return self._result(ReadStatus.MISSING, dataset_name, requested, schema_version, reasons=("database_missing",))
         try:
             with sqlite3.connect(f"{self._database_path.resolve().as_uri()}?mode=ro", uri=True) as connection:
                 connection.row_factory = sqlite3.Row
                 connection.execute("PRAGMA query_only = ON")
                 columns = self._columns(connection, table)
                 if not columns:
-                    return self._result(ReadStatus.MISSING, table, requested, schema_version, reasons=(f"{table}_missing",))
-                missing = sorted(required - columns)
+                    return self._result(
+                        ReadStatus.MISSING, dataset_name, requested,
+                        schema_version,
+                        reasons=(f"{dataset_name}_missing",),
+                    )
+                missing = sorted((required | set(active_filters)) - columns)
                 if missing:
                     return self._result(
-                        ReadStatus.BLOCKED, table, requested, schema_version,
+                        ReadStatus.BLOCKED, dataset_name, requested, schema_version,
                         reasons=tuple(f"required_column_missing:{name}" for name in missing),
                     )
-                latest_row = connection.execute(f"SELECT MAX(trade_date) FROM {table}").fetchone()
+                filter_names = tuple(sorted(active_filters))
+                filter_sql = "".join(f" AND {name}=?" for name in filter_names)
+                filter_values = tuple(active_filters[name] for name in filter_names)
+                latest_row = connection.execute(
+                    f"SELECT MAX(trade_date) FROM {table} WHERE 1=1{filter_sql}",
+                    filter_values,
+                ).fetchone()
                 latest = str(latest_row[0]) if latest_row and latest_row[0] else None
                 selections = [name if name in columns else f"NULL AS {name}" for name in fields]
                 rows = connection.execute(
-                    f"SELECT {', '.join(selections)} FROM {table} WHERE trade_date = ? ORDER BY {order_by}",
-                    (requested,),
+                    f"SELECT {', '.join(selections)} FROM {table} "
+                    f"WHERE trade_date=?{filter_sql} ORDER BY {order_by}",
+                    (requested, *filter_values),
                 ).fetchall()
                 if not rows:
                     return self._result(
-                        ReadStatus.MISSING, table, requested, schema_version, latest=latest,
-                        reasons=(f"{table}_as_of_missing",),
+                        ReadStatus.MISSING, dataset_name, requested, schema_version, latest=latest,
+                        reasons=(f"{dataset_name}_as_of_missing",),
                     )
                 null_required = sorted({
                     name
@@ -163,7 +258,7 @@ class _FactTableReader:
                 if null_required:
                     return self._result(
                         ReadStatus.BLOCKED,
-                        table,
+                        dataset_name,
                         requested,
                         schema_version,
                         latest=latest,
@@ -173,12 +268,12 @@ class _FactTableReader:
                         ),
                     )
                 return self._result(
-                    ReadStatus.OK, table, requested, schema_version,
+                    ReadStatus.OK, dataset_name, requested, schema_version,
                     facts=tuple(factory(row) for row in rows), latest=latest,
                 )
         except sqlite3.Error as exc:
             return self._result(
-                ReadStatus.BLOCKED, table, requested, schema_version,
+                ReadStatus.BLOCKED, dataset_name, requested, schema_version,
                 reasons=(f"sqlite_error:{type(exc).__name__}",),
             )
 

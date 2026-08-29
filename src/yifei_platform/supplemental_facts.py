@@ -759,6 +759,13 @@ def _require_ready_dataset(
             (as_of, source_version),
             80,
         ),
+        "sector_market_daily_ths_l2": (
+            """SELECT COUNT(*) FROM sector_market_daily
+               WHERE trade_date=? AND sector_level='THS_L2'
+                 AND source_version=? AND amount_unit='CNY'""",
+            (as_of, source_version),
+            80,
+        ),
         "sector_market_daily_sw_l2": (
             """SELECT COUNT(*) FROM sector_market_daily
                WHERE trade_date=? AND sector_level='L2'

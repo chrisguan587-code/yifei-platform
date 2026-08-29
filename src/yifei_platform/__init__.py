@@ -32,6 +32,8 @@ from .board_capital import (
     CapitalFactReaderV1,
     FactReadResultV1,
     SectorCapitalFactV1,
+    SectorMarketDailyFactV1,
+    SectorMarketFactReaderV1,
 )
 from .board_daily_ingestion import (
     AkshareThsBoardDailyClientV1,
@@ -181,6 +183,8 @@ __all__ = [
     "HistoricalStFactV1",
     "MarketSegment",
     "SectorCapitalFactV1",
+    "SectorMarketDailyFactV1",
+    "SectorMarketFactReaderV1",
     "ArtifactConflictError",
     "ArtifactEnvelopeV1",
     "ArtifactIntegrityError",

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.yplus.yifei-platform.concept-membership</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/y-plus/projects/yifei/yifei-platform/.venv/bin/yifei-platform-publish-concepts</string>
+    <string>--exchange-calendar</string><string>/Users/y-plus/projects/yifei/data/shared/exchange_calendar/sse-2026.v1.json</string>
+    <string>--output-root</string><string>/Users/y-plus/projects/yifei/data/shared/concepts</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/y-plus/projects/yifei/yifei-platform</string>
+  <key>StartCalendarInterval</key><dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/Users/y-plus/projects/yifei/yifei-platform/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>NO_PROXY</key><string>*</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/y-plus/projects/yifei/data/logs/platform_concept_membership.log</string>
+  <key>StandardErrorPath</key><string>/Users/y-plus/projects/yifei/data/logs/platform_concept_membership_err.log</string>
+  <key>RunAtLoad</key><false/>
+</dict></plist>

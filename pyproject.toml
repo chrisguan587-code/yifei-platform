@@ -7,6 +7,9 @@ name = "yifei-platform"
 version = "0.9.0"
 description = "Versioned shared market facts and neutral capabilities for Yifei applications."
 requires-python = ">=3.11"
+dependencies = [
+  "websocket-client==1.9.0",
+]
 
 [project.optional-dependencies]
 public-data = [
@@ -25,6 +28,7 @@ yifei-platform-turnover-reference = "yifei_platform.turnover_reference_cli:main"
 yifei-platform-publish-exchange-calendar = "yifei_platform.exchange_calendar_cli:main"
 yifei-platform-publish-daily-market = "yifei_platform.daily_market_cli:main"
 yifei-platform-migrate-market-observation = "yifei_platform.market_observation_cli:main"
+yifei-platform-publish-concepts = "yifei_platform.concept_membership:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

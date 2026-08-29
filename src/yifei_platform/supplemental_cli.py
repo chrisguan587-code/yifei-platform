@@ -291,7 +291,7 @@ def main() -> int:
             source_version=args.source_version,
         )
         payload = {
-            "dataset": "sector_market_daily",
+            "dataset": "sector_market_daily_ths_l2",
             "first_published_date": result.first_published_date,
             "inserted_row_count": result.inserted_row_count,
             "latest_available_as_of": result.latest_available_as_of,
@@ -307,6 +307,10 @@ def main() -> int:
                 published_at=args.published_at,
                 source_version=result.source_version,
                 published_session_count=result.published_session_count,
+                bundle="sector-market-ths-l2",
+                dataset="sector_market_daily_ths_l2",
+                sector_level="THS_L2",
+                minimum_sector_count=MINIMUM_SECTOR_COUNT,
             )
             payload["readiness_marker_id"] = marker.marker_id
     elif args.command == "publish-sector-market-daily-v2":
@@ -704,48 +708,9 @@ def _publish_board_readiness(
 def _publish_sector_market_readiness(
     *, database_path: Path, readiness_root: Path, as_of: str,
     published_at: str, source_version: str, published_session_count: int,
+    bundle: str, dataset: str, sector_level: str,
+    minimum_sector_count: int,
 ) -> ReadinessMarkerV1:
-    if published_session_count == 0:
-        existing = ReadinessStoreV1(readiness_root).read_ready(
-            bundle="v4-market-sector", as_of=as_of,
-        )
-        if existing is not None:
-            if (
-                existing.bundle != "v4-market-sector"
-                or existing.as_of != as_of
-                or existing.producer_version != SUPPLEMENTAL_SCHEMA_VERSION
-                or tuple(existing.required_datasets) != ("sector_market_daily",)
-            ):
-                raise ValueError("existing sector market readiness contract mismatch")
-            with sqlite3.connect(
-                f"file:{database_path.resolve(strict=True)}?mode=ro", uri=True,
-            ) as connection:
-                count = int(connection.execute(
-                    """SELECT COUNT(*) FROM sector_market_daily
-                       WHERE trade_date=? AND sector_level='THS_L2'
-                         AND source_version=? AND amount_unit='CNY'""",
-                    (as_of, source_version),
-                ).fetchone()[0])
-            if count < MINIMUM_SECTOR_COUNT:
-                raise ValueError("existing sector market readiness coverage mismatch")
-            return existing
-    return publish_supplemental_readiness_v1(
-        database_path=database_path,
-        readiness_root=readiness_root,
-        as_of=as_of,
-        published_at=published_at,
-        source_versions={"sector_market_daily": source_version},
-        dataset_coverages={"sector_market_daily": None},
-        bundle="v4-market-sector",
-    )
-
-
-def _publish_sector_market_v2_readiness(
-    *, database_path: Path, readiness_root: Path, as_of: str,
-    published_at: str, source_version: str, published_session_count: int,
-) -> ReadinessMarkerV1:
-    bundle = "v4-market-sector-sw-l2"
-    dataset = "sector_market_daily_sw_l2"
     if published_session_count == 0:
         existing = ReadinessStoreV1(readiness_root).read_ready(
             bundle=bundle, as_of=as_of,
@@ -758,20 +723,22 @@ def _publish_sector_market_v2_readiness(
                 or tuple(existing.required_datasets) != (dataset,)
             ):
                 raise ValueError(
-                    "existing SW sector market readiness contract mismatch"
+                    "existing sector market readiness contract mismatch "
+                    f"for {bundle}"
                 )
             with sqlite3.connect(
                 f"file:{database_path.resolve(strict=True)}?mode=ro", uri=True,
             ) as connection:
                 count = int(connection.execute(
                     """SELECT COUNT(*) FROM sector_market_daily
-                       WHERE trade_date=? AND sector_level='L2'
+                       WHERE trade_date=? AND sector_level=?
                          AND source_version=? AND amount_unit='CNY'""",
-                    (as_of, source_version),
+                    (as_of, sector_level, source_version),
                 ).fetchone()[0])
-            if count < MINIMUM_SW_SECTOR_COUNT:
+            if count < minimum_sector_count:
                 raise ValueError(
-                    "existing SW sector market readiness coverage mismatch"
+                    "existing sector market readiness coverage mismatch "
+                    f"for {bundle}"
                 )
             return existing
     return publish_supplemental_readiness_v1(
@@ -782,6 +749,24 @@ def _publish_sector_market_v2_readiness(
         source_versions={dataset: source_version},
         dataset_coverages={dataset: None},
         bundle=bundle,
+    )
+
+
+def _publish_sector_market_v2_readiness(
+    *, database_path: Path, readiness_root: Path, as_of: str,
+    published_at: str, source_version: str, published_session_count: int,
+) -> ReadinessMarkerV1:
+    return _publish_sector_market_readiness(
+        database_path=database_path,
+        readiness_root=readiness_root,
+        as_of=as_of,
+        published_at=published_at,
+        source_version=source_version,
+        published_session_count=published_session_count,
+        bundle="sector-market-sw-l2",
+        dataset="sector_market_daily_sw_l2",
+        sector_level="L2",
+        minimum_sector_count=MINIMUM_SW_SECTOR_COUNT,
     )
 
 

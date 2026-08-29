@@ -5,7 +5,11 @@ import sqlite3
 import tempfile
 import unittest
 
-from yifei_platform.board_capital import BoardFactReaderV1, CapitalFactReaderV1
+from yifei_platform.board_capital import (
+    BoardFactReaderV1,
+    CapitalFactReaderV1,
+    SectorMarketFactReaderV1,
+)
 from yifei_platform.market_data import ReadStatus
 
 
@@ -50,6 +54,25 @@ class BoardCapitalReaderContractTest(unittest.TestCase):
         self.assertEqual(ReadStatus.BLOCKED, result.status)
         self.assertIn("required_column_missing:sector_code", result.reason_codes)
 
+    def test_sector_market_reader_isolates_taxonomy_and_source_version(self) -> None:
+        reader = SectorMarketFactReaderV1(
+            self.db_path, sector_level="THS_L2",
+            source_version="platform-stock-daily-ths-l2.v1",
+        )
+        result = reader.read_daily("2026-07-10")
+
+        self.assertTrue(result.ok)
+        self.assertEqual("sector_market_daily_ths_l2", result.dataset)
+        self.assertEqual(1, len(result.facts))
+        self.assertEqual("机器人", result.facts[0].sector_name)
+        self.assertEqual(1.2, result.facts[0].equal_weight_return_pct)
+        self.assertEqual(1234.0, result.facts[0].amount)
+
+        wrong_source = SectorMarketFactReaderV1(
+            self.db_path, sector_level="THS_L2", source_version="wrong.v1",
+        ).read_daily("2026-07-10")
+        self.assertEqual(ReadStatus.MISSING, wrong_source.status)
+
     @staticmethod
     def _seed(path: Path) -> None:
         with sqlite3.connect(path) as connection:
@@ -84,5 +107,32 @@ class BoardCapitalReaderContractTest(unittest.TestCase):
                     "2026-07-10", "S001", "机器人", 987654321,
                     2.1, 123456789, 18, 3, "测试股份", None,
                     "CNY", "CNY",
+                ),
+            )
+            connection.execute(
+                """CREATE TABLE sector_market_daily (
+                    sector_code TEXT, sector_name TEXT, sector_level TEXT,
+                    trade_date TEXT, member_count INTEGER,
+                    observed_member_count INTEGER,
+                    equal_weight_return_pct REAL, amount REAL,
+                    amount_unit TEXT, coverage REAL, source TEXT,
+                    source_version TEXT, membership_source_version TEXT,
+                    published_at TEXT)"""
+            )
+            connection.executemany(
+                "INSERT INTO sector_market_daily VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    (
+                        "THS:001", "机器人", "THS_L2", "2026-07-10",
+                        10, 10, 1.2, 1234.0, "CNY", 1.0, "platform",
+                        "platform-stock-daily-ths-l2.v1", "membership.v1",
+                        "2026-07-10T10:00:00+00:00",
+                    ),
+                    (
+                        "SW:001", "自动化设备", "L2", "2026-07-10",
+                        12, 12, 2.3, 2345.0, "CNY", 1.0, "platform",
+                        "platform-stock-daily-cninfo-sw-l2.v2",
+                        "membership.v2", "2026-07-10T10:00:00+00:00",
+                    ),
                 ),
             )
