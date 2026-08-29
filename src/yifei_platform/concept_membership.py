@@ -14,6 +14,7 @@ import urllib.request
 import websocket
 
 CONCEPT_SCHEMA_VERSION = "platform-concept-membership.v1"
+LEGACY_BOOTSTRAP_SCHEMA_VERSION = "shortline-concept-membership.v1"
 CONCEPT_UPDATE_STATUS_VERSION = "platform-concept-update-status.v1"
 NORMAL_REUSE_TRADING_DAYS = 5
 MAX_REUSE_TRADING_DAYS = 15
@@ -386,7 +387,12 @@ def resolve_concept_snapshot(
             continue
         path = candidates[0]
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("schema_version") != CONCEPT_SCHEMA_VERSION:
+        schema_version = payload.get("schema_version")
+        legacy_bootstrap = (
+            path != canonical
+            and schema_version == LEGACY_BOOTSTRAP_SCHEMA_VERSION
+        )
+        if schema_version != CONCEPT_SCHEMA_VERSION and not legacy_bootstrap:
             continue
         concepts = payload.get("concepts")
         if not isinstance(concepts, list) or not concepts:
@@ -400,6 +406,7 @@ def resolve_concept_snapshot(
             "maximum_reuse_trading_days": MAX_REUSE_TRADING_DAYS,
             "selected_source": payload.get("selected_source"),
             "taxonomy": payload.get("taxonomy"),
+            "schema_version": schema_version,
         }
         return concepts, freshness, path
     raise FileNotFoundError(

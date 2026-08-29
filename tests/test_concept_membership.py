@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from yifei_platform.concept_membership import (
     CONCEPT_SCHEMA_VERSION,
+    LEGACY_BOOTSTRAP_SCHEMA_VERSION,
     _evaluate_ths_crawl,
     fetch_ths_web_concepts,
     latest_session_on_or_before,
@@ -200,7 +201,7 @@ class ConceptUpdateTest(unittest.TestCase):
             "concept_membership_2026-08-28_bootstrap-ths-web.json"
         )
         payload = {
-            "schema_version": CONCEPT_SCHEMA_VERSION,
+            "schema_version": LEGACY_BOOTSTRAP_SCHEMA_VERSION,
             "selected_source": "ths_web",
             "taxonomy": "ths_concept",
             "concepts": [{"concept_code": "x", "concept_name": "启动",
@@ -216,6 +217,7 @@ class ConceptUpdateTest(unittest.TestCase):
         self.assertEqual(bootstrap.resolve(), selected)
 
         canonical = date_root / "concept_membership_2026-08-28.json"
+        payload["schema_version"] = CONCEPT_SCHEMA_VERSION
         payload["concepts"][0]["concept_name"] = "正式"
         canonical.write_text(json.dumps(payload), encoding="utf-8")
         concepts, _, selected = resolve_concept_snapshot(
