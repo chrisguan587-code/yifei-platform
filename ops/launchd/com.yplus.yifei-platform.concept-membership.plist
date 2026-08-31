@@ -8,7 +8,7 @@
     <string>--output-root</string><string>/Users/y-plus/projects/yifei/data/shared/concepts</string>
   </array>
   <key>WorkingDirectory</key><string>/Users/y-plus/projects/yifei/yifei-platform</string>
-  <key>StartCalendarInterval</key><dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
+  <key>StartCalendarInterval</key><dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>/Users/y-plus/projects/yifei/yifei-platform/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>NO_PROXY</key><string>*</string>

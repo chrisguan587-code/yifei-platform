@@ -26,7 +26,7 @@ class ConceptMembershipLaunchdContractTest(unittest.TestCase):
             arguments,
         )
         self.assertEqual(
-            {"Weekday": 6, "Hour": 18, "Minute": 30}, schedule
+            {"Weekday": 5, "Hour": 18, "Minute": 30}, schedule
         )
 
 

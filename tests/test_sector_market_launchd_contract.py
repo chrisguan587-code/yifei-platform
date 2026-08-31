@@ -24,7 +24,7 @@ class SectorMarketLaunchdContractTests(unittest.TestCase):
         with plist_path.open("rb") as stream:
             payload = plistlib.load(stream)
         intervals = payload["StartCalendarInterval"]
-        self.assertEqual({2, 3, 4, 5, 6}, {item["Weekday"] for item in intervals})
+        self.assertEqual({1, 2, 3, 4, 5}, {item["Weekday"] for item in intervals})
         self.assertTrue(
             all(item["Hour"] == 17 and item["Minute"] == 40 for item in intervals)
         )
