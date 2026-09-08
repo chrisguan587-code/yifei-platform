@@ -86,6 +86,7 @@ Implemented public contracts:
 - `ReadinessMarkerV1`: strict, atomic publication that references a verified quality snapshot.
 - `ArtifactEnvelopeV1`: content-addressed producer/payload metadata with immutable storage and indexing.
 - `OutcomeCalculatorV1`: neutral T+N, MFE, MAE, and close-drawdown calculation for caller-owned samples.
+- `BacktestEngineV1`: manual A-share next-open execution simulation for caller-owned order intents, with strict T+1 settlement, bounded liquidity, versioned fees, positions, and portfolio NAV.
 - `EligibilityPrimitiveV1`: versioned segment/ST/liquidity facts without an eligibility decision.
 - `BoardFactReaderV1` and `CapitalFactReaderV1`: exact-date board and sector-capital facts without V3 score/action semantics.
 - `StockCapitalFactReaderV1`, `SectorMembershipReaderV1`, and
@@ -101,6 +102,17 @@ Artifact and outcome semantics are documented in [A3_ARTIFACT_OUTCOME_V1.md](./d
 B1 fact boundaries are documented in [B1_ELIGIBILITY_BOARD_CAPITAL_V1.md](./docs/contracts/B1_ELIGIBILITY_BOARD_CAPITAL_V1.md).
 B2 supplemental fact boundaries and quality gates are documented in
 [B2_SUPPLEMENTAL_CAPITAL_SECTOR_FACTS_V1.md](./docs/contracts/B2_SUPPLEMENTAL_CAPITAL_SECTOR_FACTS_V1.md).
+The backtest ownership, execution contract, and V3 migration boundary are documented in
+[125-Yifei-Platform统一回测引擎V1合同与迁移方案.md](./docs/125-Yifei-Platform统一回测引擎V1合同与迁移方案.md).
+
+The backtest runner is manual only. It accepts an explicit JSON spec and creates one immutable run directory containing the frozen market database and the full order/fill/portfolio audit trail:
+
+```bash
+yifei-platform-backtest \
+  --spec /path/to/backtest-spec.json \
+  --market-db /path/to/market_data.db \
+  --output-root /path/to/research-backtests
+```
 Shared concept membership ownership is documented in
 [B6_SHARED_CONCEPT_MEMBERSHIP_V1.md](./docs/contracts/B6_SHARED_CONCEPT_MEMBERSHIP_V1.md).
 
