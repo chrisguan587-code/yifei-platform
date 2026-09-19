@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.yplus.yifei-platform.capital-float-shares-weekly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>/Users/y-plus/projects/yifei/yifei-platform/scripts/run_capital_facts.sh</string>
+    <string>/Users/y-plus/projects/yifei/data/shared/market_data.db</string>
+    <string>/Users/y-plus/projects/yifei/data/shared/supplemental_facts.db</string>
+    <string>weekly-shares</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>5</integer>
+    <key>Hour</key>
+    <integer>18</integer>
+    <key>Minute</key>
+    <integer>35</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/y-plus/projects/yifei/data/shared/logs/capital-float-shares-weekly.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/y-plus/projects/yifei/data/shared/logs/capital-float-shares-weekly.err.log</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/y-plus/projects/yifei/yifei-platform</string>
+</dict>
+</plist>

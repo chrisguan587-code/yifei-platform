@@ -38,6 +38,13 @@ class FakeWebSocket:
 
 class ConceptUpdateTest(unittest.TestCase):
     def setUp(self):
+        json_patch = patch(
+            "yifei_platform.concept_membership.fetch_ths_json_concepts",
+            return_value={"source": "ths_public_json", "taxonomy": "ths_concept",
+                          "ok": False, "error": "test source unavailable"},
+        )
+        self.json_source = json_patch.start()
+        self.addCleanup(json_patch.stop)
         self.tempdir = tempfile.TemporaryDirectory()
         self.root = Path(self.tempdir.name)
         self.calendar = self.root / "calendar.json"
@@ -116,6 +123,38 @@ class ConceptUpdateTest(unittest.TestCase):
         self.assertEqual(CONCEPT_SCHEMA_VERSION, snapshot["schema_version"])
         self.assertEqual("ths_web", snapshot["selected_source"])
         self.assertFalse(snapshot["mixed_sources"])
+        self.assertEqual(["ths_public_json", "ths_web"], [
+            item["source"] for item in snapshot["source_attempts"]
+        ])
+
+    def test_primary_success_does_not_call_browser_or_overwrite_snapshot(self):
+        self.json_source.return_value = {
+            "source": "ths_public_json", "taxonomy": "ths_concept", "ok": True,
+            "concept_count": 300, "complete_concept_ratio": 1.0,
+            "member_code_parse_ratio": 1.0, "concepts": [{"concept_code": "300816"}],
+            "source_lineage": {"capture_method": "public_http_json"},
+        }
+        with patch("yifei_platform.concept_membership.fetch_ths_web_concepts") as backup:
+            result = run_concept_update(trade_date="2026-08-28",
+                exchange_calendar=self.calendar, output_root=self.root / "concepts")
+            snapshot = Path(result["selected_snapshot"])
+            original = snapshot.read_bytes()
+            again = run_concept_update(trade_date="2026-08-28",
+                exchange_calendar=self.calendar, output_root=self.root / "concepts")
+        backup.assert_not_called()
+        self.json_source.assert_called_once()
+        self.assertEqual("already_current", again["status"])
+        self.assertEqual(original, snapshot.read_bytes())
+        self.assertEqual("public_http_json", json.loads(original)["source_lineage"]["capture_method"])
+
+    def test_reused_cli_is_nonzero_and_warns(self):
+        from yifei_platform.concept_membership import main
+        with patch("sys.argv", ["publish", "--exchange-calendar", str(self.calendar),
+                                 "--output-root", str(self.root), "--trade-date", "2026-08-28"]), \
+             patch("yifei_platform.concept_membership.run_concept_update", return_value={"status": "reused"}), \
+             patch("builtins.print") as output:
+            self.assertEqual(3, main())
+        self.assertTrue(any("WARNING" in str(call) for call in output.call_args_list))
 
     def test_failed_update_reuses_current_week_snapshot_as_normal(self):
         old_root = self.root / "concepts" / "2026-08-24"

@@ -6,12 +6,15 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Mapping, Sequence
 import urllib.request
 
 import websocket
+
+from .concept_http import fetch_ths_json_concepts
 
 CONCEPT_SCHEMA_VERSION = "platform-concept-membership.v1"
 LEGACY_BOOTSTRAP_SCHEMA_VERSION = "shortline-concept-membership.v1"
@@ -28,7 +31,9 @@ CHROME_PATH = Path(
 )
 _THS_CRAWL_EXPRESSION = r"""(async () => {
   const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+  let blocked = false;
   const decode = async response => {
+    if ([401, 403, 429].includes(response.status)) blocked = true;
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.url}`);
     const text = new TextDecoder("gbk").decode(await response.arrayBuffer());
     if (!text.includes("m-pager-table")) throw new Error(`Malformed table: ${response.url}`);
@@ -37,8 +42,13 @@ _THS_CRAWL_EXPRESSION = r"""(async () => {
   const fetchText = async url => {
     let failure;
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (blocked) throw new Error("THS access denied or rate limited; source stopped");
       try { return await decode(await fetch(url)); }
-      catch (error) { failure = error; await sleep(250); }
+      catch (error) {
+        failure = error;
+        if (blocked) throw error;
+        await sleep(250);
+      }
     }
     throw failure;
   };
@@ -80,7 +90,7 @@ _THS_CRAWL_EXPRESSION = r"""(async () => {
       reported_member_count: reportedCount,
       parsed_member_count: memberCodes.length,
       member_codes: memberCodes,
-      complete: true,
+      complete: memberCodes.length > 0 && memberCodes.length === reportedCount,
       returned_member_rows: rawCodes.length,
       valid_member_rows: rawCodes.filter(code => /^\d{6}$/.test(code)).length
     };
@@ -234,8 +244,8 @@ def _wait_for_ths_browser(websocket_url: str) -> None:
 
 def _evaluate_ths_crawl(websocket_url: str) -> list[dict[str, object]]:
     connection = websocket.create_connection(websocket_url, timeout=10)
-    connection.settimeout(300)
     try:
+        connection.settimeout(300)
         connection.send(json.dumps({
             "id": 1,
             "method": "Runtime.evaluate",
@@ -299,9 +309,13 @@ def run_concept_update(
         }
 
     attempts: list[dict[str, object]] = []
-    report = fetch_ths_web_concepts()
-    attempts.append(_attempt_summary(report))
-    selected = report if report.get("ok") else None
+    selected = None
+    for fetch in (fetch_ths_json_concepts, fetch_ths_web_concepts):
+        report = fetch()
+        attempts.append(_attempt_summary(report))
+        if report.get("ok") and report.get("taxonomy") == "ths_concept":
+            selected = report
+            break
 
     captured_at = datetime.now().isoformat(timespec="seconds")
     if selected is not None:
@@ -316,7 +330,7 @@ def run_concept_update(
             "member_code_parse_ratio": selected["member_code_parse_ratio"],
             "concepts": selected["concepts"],
             "source_attempts": attempts,
-            "source_lineage": {
+            "source_lineage": selected.get("source_lineage") or {
                 "capture_method": "scheduled_chrome_cdp_public_pages",
                 "endpoint": "q.10jqka.com.cn/gn",
                 "page_size": 1000,
@@ -420,6 +434,16 @@ def _complete_report(
     concepts: Sequence[Mapping[str, object]], reported_concept_count: int,
     returned_member_rows: int, valid_member_codes: int,
 ) -> dict[str, object]:
+    # Never trust a provider's complete flag when its actual unique count differs.
+    concepts = [dict(item) for item in concepts]
+    for item in concepts:
+        codes = item.get("member_codes") or []
+        item["complete"] = bool(
+            item.get("complete") and codes
+            and len(set(codes)) == len(codes) == item.get("reported_member_count")
+            and all(isinstance(code, str) and len(code) == 6 and code.isascii()
+                    and code.isdigit() for code in codes)
+        )
     complete_count = sum(bool(item.get("complete")) for item in concepts)
     complete_ratio = (
         complete_count / reported_concept_count if reported_concept_count else 0.0
@@ -437,6 +461,8 @@ def _complete_report(
         "taxonomy": taxonomy,
         "ok": (
             len(concepts) >= thresholds["minimum_concept_count"]
+            and len(concepts) == reported_concept_count
+            and len({item.get("concept_code") for item in concepts}) == len(concepts)
             and complete_ratio >= thresholds["minimum_complete_concept_ratio"]
             and parse_ratio >= thresholds["minimum_member_code_parse_ratio"]
         ),
@@ -449,6 +475,11 @@ def _complete_report(
         "valid_member_code_count": valid_member_codes,
         "member_code_parse_ratio": round(parse_ratio, 4),
         "thresholds": thresholds,
+        "incomplete_examples": [
+            {"concept_code": item.get("concept_code"),
+             "error": item.get("error", "member total or code validation failed")}
+            for item in concepts if not item.get("complete")
+        ],
         "concepts": list(concepts),
     }
 
@@ -459,6 +490,7 @@ def _attempt_summary(report: Mapping[str, object]) -> dict[str, object]:
         for key in (
             "source", "taxonomy", "ok", "duration_seconds", "concept_count",
             "complete_concept_ratio", "member_code_parse_ratio", "error",
+            "incomplete_examples",
         )
         if key in report
     }
@@ -540,7 +572,10 @@ def main() -> int:
         output_root=args.output_root,
     )
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get("status") != "unavailable" else 2
+    if result.get("status") in {"reused", "unavailable"}:
+        print("WARNING: concept refresh failed; no new snapshot published", file=sys.stderr)
+        return 3 if result["status"] == "reused" else 2
+    return 0
 
 
 if __name__ == "__main__":

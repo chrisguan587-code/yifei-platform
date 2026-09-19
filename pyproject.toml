@@ -16,6 +16,7 @@ public-data = [
   "akshare>=1.18.55",
   "baostock>=0.9.3",
   "levistock>=0.1.0",
+  "mootdx>=0.11.7",
 ]
 
 [project.scripts]
@@ -30,6 +31,7 @@ yifei-platform-publish-daily-market = "yifei_platform.daily_market_cli:main"
 yifei-platform-migrate-market-observation = "yifei_platform.market_observation_cli:main"
 yifei-platform-publish-concepts = "yifei_platform.concept_membership:main"
 yifei-platform-backtest = "yifei_platform.backtest_cli:main"
+yifei-platform-capital-facts = "yifei_platform.capital_facts_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

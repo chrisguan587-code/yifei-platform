@@ -12,6 +12,21 @@ from .bootstrap import (
     publish_turnover_enriched_daily_market_data,
 )
 from .calendar import CalendarRangeError, TradeDateContextV1, TradingCalendarV1
+from .capital_facts import (
+    CAPITAL_FACTS_SCHEMA_VERSION,
+    BAOSTOCK_FLOAT_SHARES_SOURCE,
+    BAOSTOCK_FLOAT_SHARES_SOURCE_VERSION,
+    FLOAT_MARKET_CAP_SOURCE_VERSION,
+    FLOAT_SHARES_MINIMUM_COVERAGE,
+    MOOTDX_FLOAT_SHARES_SOURCE,
+    MOOTDX_FLOAT_SHARES_SOURCE_VERSION,
+    BaoStockFloatShareClientV1,
+    CapitalPublicationResultV1,
+    FloatShareSourceRowV1,
+    MootdxFloatShareClientV1,
+    publish_float_market_cap_daily_v1,
+    publish_float_shares_weekly_v1,
+)
 from .day0_cohort_benchmark import (
     AShareDay0CohortBenchmarkResultV1,
     AShareDay0CohortBenchmarkV1,
