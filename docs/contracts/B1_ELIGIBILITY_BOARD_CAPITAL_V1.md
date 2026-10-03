@@ -14,6 +14,10 @@ Reads exact historical rows from `ths_board_daily` through a read-only connectio
 
 ## BoardDailyPublisherV1
 
+2026-10-03数据准备说明：既有公开客户端名称保留，但其内部已改用相同THS公共指数
+HTTP端点，避免当前本机AKShare MiniRacer加载故障；并非新增成员重算或替代指数源。
+生产调度仍以B5退役条款为准，尚未恢复。新的前瞻消费者/PIT发布草案见B6。
+
 The board publisher runs after the authoritative `stock_daily` row for the same
 market date is available. It synchronizes missing sessions from the AKShare THS
 industry-board endpoint into `ths_board_daily`; it does not read V3 tables or

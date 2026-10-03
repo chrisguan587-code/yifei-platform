@@ -3,11 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 import math
+import json
 import os
 from pathlib import Path
 import shutil
 import sqlite3
 import tempfile
+import re
+import time
+from html import unescape
 from typing import Mapping, Protocol, Sequence
 
 from .supplemental_facts import (
@@ -40,29 +44,75 @@ class BoardDailySyncResultV1:
 
 
 class AkshareThsBoardDailyClientV1:
-    """Thin adapter for the current THS industry-board endpoints."""
+    """Existing public client name; read the same THS index without MiniRacer.
+
+    The source is still the vendor's industry index, not member aggregation.
+    Transport is shared with Platform's existing public THS HTTP collector.
+    """
 
     def __init__(self):
-        import akshare as ak
-
-        self._ak = ak
+        self._boards = None
 
     def list_boards(self) -> tuple[dict[str, object], ...]:
-        return tuple(
-            {
-                "board_code": row.get("code"),
-                "board_name": row.get("name"),
-            }
-            for _, row in self._ak.stock_board_industry_name_ths().iterrows()
-        )
+        from .concept_http import _get
+
+        text = _get('http://q.10jqka.com.cn/thshy/detail/code/881272/', time.monotonic()+45)
+        pairs = re.findall(r'/thshy/detail/code/(881\d{3})/[^>]*>([^<]+)</a>', text)
+        boards = {}
+        for code, raw_name in pairs:
+            name = unescape(raw_name).strip()
+            if not name or '\ufffd' in name or (code in boards and boards[code] != name):
+                raise ValueError('ambiguous THS industry identity')
+            boards[code] = name
+        if len(boards) < BOARD_DAILY_MINIMUM_ROWS or len(set(boards.values())) != len(boards):
+            raise ValueError('incomplete THS industry directory')
+        self._boards = boards
+        return tuple(dict(board_code=code, board_name=name) for code,name in sorted(boards.items()))
 
     def read_history(
         self, board_name: str, start_date: str, end_date: str
     ) -> tuple[dict[str, object], ...]:
-        frame = self._ak.stock_board_industry_index_ths(
-            symbol=board_name, start_date=start_date, end_date=end_date,
-        )
-        return tuple(dict(row) for _, row in frame.iterrows())
+        from .concept_http import _get
+
+        start = datetime.strptime(start_date, '%Y%m%d').date()
+        end = datetime.strptime(end_date, '%Y%m%d').date()
+        if start > end:
+            raise ValueError('invalid industry history window')
+        if self._boards is None:
+            self.list_boards()
+        codes = [code for code,name in self._boards.items() if name == board_name]
+        if len(codes) != 1:
+            raise ValueError('unknown THS industry name')
+        rows = []
+        for year in range(start.year, end.year+1):
+            callback = f'quotebridge_v4_line_bk_{codes[0]}_01_{year}'
+            text = _get(f'https://d.10jqka.com.cn/v4/line/bk_{codes[0]}/01/{year}.js',
+                        time.monotonic()+45)
+            match = re.fullmatch(re.escape(callback)+r'\((\{.*\})\)\s*;?\s*', text.strip(), re.S)
+            if not match:
+                raise ValueError('malformed THS industry history wrapper')
+            payload = json.loads(match[1])
+            if not isinstance(payload.get('data'), str) or not payload['data']:
+                raise ValueError('empty THS industry history')
+            for raw in payload['data'].split(';'):
+                parts = raw.split(',')
+                if len(parts) not in (11,12):
+                    raise ValueError('malformed THS industry history row')
+                day = datetime.strptime(parts[0], '%Y%m%d').date()
+                if day.year != year:
+                    raise ValueError('THS industry history year mismatch')
+                if start <= day <= end:
+                    values = [_number(v) for v in parts[1:7]]
+                    if (any(v is None for v in values) or min(values[:4]) <= 0
+                            or min(values[4:]) < 0 or values[1] < max(values[0],values[3])
+                            or values[2] > min(values[0],values[3]) or values[1] < values[2]):
+                        raise ValueError('invalid THS industry OHLC or activity')
+                    rows.append(dict(zip(('日期','开盘价','最高价','最低价','收盘价','成交量','成交额'),
+                        (day.isoformat(),*values))))
+        dates = [r['日期'] for r in rows]
+        if dates != sorted(set(dates)):
+            raise ValueError('duplicated or unordered THS industry history')
+        return tuple(rows)
 
 
 @serialized_supplemental_publication_v1
