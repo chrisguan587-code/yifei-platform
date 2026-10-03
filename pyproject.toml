@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yifei-platform"
-version = "0.10.0"
+version = "0.11.0"
 description = "Versioned shared market facts and neutral capabilities for Yifei applications."
 requires-python = ">=3.11"
 dependencies = [
@@ -32,6 +32,7 @@ yifei-platform-migrate-market-observation = "yifei_platform.market_observation_c
 yifei-platform-publish-concepts = "yifei_platform.concept_membership:main"
 yifei-platform-backtest = "yifei_platform.backtest_cli:main"
 yifei-platform-capital-facts = "yifei_platform.capital_facts_cli:main"
+yifei-platform-vendor-index = "yifei_platform.vendor_index_capture:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

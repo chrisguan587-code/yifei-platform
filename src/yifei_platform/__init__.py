@@ -56,6 +56,7 @@ from .board_daily_ingestion import (
     BoardDailySyncResultV1,
     sync_board_daily_v1,
 )
+from .vendor_index_capture import publish_vendor_index_capture_v1, read_vendor_index_capture_v1
 from .eligibility import (
     HISTORICAL_ST_RULE_VERSION,
     EligibilityFactsV1,
@@ -189,7 +190,7 @@ from .backtest import (
     PortfolioViewV1,
 )
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 __all__ = [
     "BACKTEST_ENGINE_VERSION",
@@ -303,6 +304,8 @@ __all__ = [
     "TradingCalendarV1",
     "bootstrap_market_data",
     "sync_board_daily_v1",
+    "publish_vendor_index_capture_v1",
+    "read_vendor_index_capture_v1",
     "backfill_tushare_supplemental_v1",
     "backfill_public_supplemental_v1",
     "backfill_public_capital_v1",
