@@ -54,7 +54,15 @@ while [ "$attempt" -le 3 ]; do
         --readiness-root "$READINESS_ROOT" \
         --as-of "$AS_OF" \
         --published-at "$PUBLISHED_AT"; then
-    exit 0
+    # Shared centers depend on the exact day's completed daily-bar publication.
+    # Failure here must not trigger another market-data fetch or reuse yesterday.
+    exec env PYTHONPATH="$(dirname "$0")/../src" \
+      "$PYTHON_BIN" -m yifei_platform.center_facts_cli \
+        --market-db "$TARGET_DB" \
+        --exchange-calendar "$EXCHANGE_CALENDAR" \
+        --readiness-root "$READINESS_ROOT" \
+        --output-root "$(dirname "$TARGET_DB")/consolidation_centers" \
+        --as-of "$AS_OF"
   fi
   if [ "$attempt" -lt 3 ]; then
     sleep 30

@@ -1,5 +1,8 @@
 """Shared market facts and neutral capabilities for Yifei applications."""
 
+from .center_facts import publish_center_facts_v1, read_center_snapshot_v1, read_stock_center_v1
+from .consolidation_center import recent_center
+
 from .bootstrap import (
     BOOTSTRAP_VERSION,
     TRANSITIONAL_DAILY_VERSION,
@@ -190,9 +193,13 @@ from .backtest import (
     PortfolioViewV1,
 )
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 __all__ = [
+    "publish_center_facts_v1",
+    "read_center_snapshot_v1",
+    "read_stock_center_v1",
+    "recent_center",
     "BACKTEST_ENGINE_VERSION",
     "BACKTEST_RESULT_VERSION",
     "BacktestContextV1",

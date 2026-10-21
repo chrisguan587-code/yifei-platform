@@ -205,6 +205,10 @@ class TurnoverDailyPublisherTest(unittest.TestCase):
                 "yifei_platform.turnover_cli.BaoStockDailyClientV1",
                 side_effect=RuntimeError("network unavailable"),
             ),
+            patch(
+                "yifei_platform.turnover_cli.EastmoneyDailyTurnoverClientV1",
+                side_effect=RuntimeError("network unavailable"),
+            ),
         ):
             self.assertEqual(75, turnover_cli_main())
 

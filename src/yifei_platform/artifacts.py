@@ -190,26 +190,31 @@ class ArtifactStoreV1:
         return self._root / "indexes" / envelope.as_of / f"{envelope.artifact_id}.json"
 
     def _write_immutable_json(self, path: Path, payload: dict[str, object]) -> None:
-        encoded = _canonical_json(payload) + "\n"
-        if path.exists():
+        write_immutable_json_v1(path, payload, publish_file=self._publish_file)
+
+
+def write_immutable_json_v1(path: Path, payload: dict[str, object], *, publish_file=os.link) -> None:
+    """Atomically freeze a named shared fact, using the artifact store's conflict rules."""
+    encoded = _canonical_json(payload) + "\n"
+    if path.exists():
+        if path.read_text(encoding="utf-8") == encoded:
+            return
+        raise ArtifactConflictError(f"immutable artifact record already exists: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            publish_file(temporary_name, str(path))
+        except FileExistsError:
             if path.read_text(encoding="utf-8") == encoded:
                 return
             raise ArtifactConflictError(f"immutable artifact record already exists: {path}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                handle.write(encoded)
-                handle.flush()
-                os.fsync(handle.fileno())
-            try:
-                self._publish_file(temporary_name, str(path))
-            except FileExistsError:
-                if path.read_text(encoding="utf-8") == encoded:
-                    return
-                raise ArtifactConflictError(f"immutable artifact record already exists: {path}")
-        finally:
-            Path(temporary_name).unlink(missing_ok=True)
+    finally:
+        Path(temporary_name).unlink(missing_ok=True)
 
 
 def _validate_name(value: str, field: str, *, allow_slash: bool = False) -> None:

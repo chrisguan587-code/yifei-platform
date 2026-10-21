@@ -88,31 +88,45 @@ class AkshareThsBoardDailyClientV1:
             callback = f'quotebridge_v4_line_bk_{codes[0]}_01_{year}'
             text = _get(f'https://d.10jqka.com.cn/v4/line/bk_{codes[0]}/01/{year}.js',
                         time.monotonic()+45)
-            match = re.fullmatch(re.escape(callback)+r'\((\{.*\})\)\s*;?\s*', text.strip(), re.S)
-            if not match:
-                raise ValueError('malformed THS industry history wrapper')
-            payload = json.loads(match[1])
-            if not isinstance(payload.get('data'), str) or not payload['data']:
-                raise ValueError('empty THS industry history')
-            for raw in payload['data'].split(';'):
-                parts = raw.split(',')
-                if len(parts) not in (11,12):
-                    raise ValueError('malformed THS industry history row')
-                day = datetime.strptime(parts[0], '%Y%m%d').date()
-                if day.year != year:
-                    raise ValueError('THS industry history year mismatch')
-                if start <= day <= end:
-                    values = [_number(v) for v in parts[1:7]]
-                    if (any(v is None for v in values) or min(values[:4]) <= 0
-                            or min(values[4:]) < 0 or values[1] < max(values[0],values[3])
-                            or values[2] > min(values[0],values[3]) or values[1] < values[2]):
-                        raise ValueError('invalid THS industry OHLC or activity')
-                    rows.append(dict(zip(('日期','开盘价','最高价','最低价','收盘价','成交量','成交额'),
-                        (day.isoformat(),*values))))
+            rows.extend(_parse_ths_history(text, callback, start, end, year=year))
+        # The vendor's annual file can lag its recent file by one session.
+        # Fill only the requested final date, with the same index identity and
+        # OHLC checks. Missing dates still fail the publication coverage gate.
+        if end.isoformat() not in {r['日期'] for r in rows}:
+            callback=f'quotebridge_v4_line_bk_{codes[0]}_01_last'
+            text=_get(f'https://d.10jqka.com.cn/v4/line/bk_{codes[0]}/01/last.js',
+                time.monotonic()+45)
+            rows.extend(_parse_ths_history(text,callback,end,end))
         dates = [r['日期'] for r in rows]
         if dates != sorted(set(dates)):
             raise ValueError('duplicated or unordered THS industry history')
         return tuple(rows)
+
+
+def _parse_ths_history(text, callback, start, end, *, year=None):
+    match=re.fullmatch(re.escape(callback)+r'\((\{.*\})\)\s*;?\s*',text.strip(),re.S)
+    if not match:
+        raise ValueError('malformed THS industry history wrapper')
+    payload=json.loads(match[1])
+    if not isinstance(payload.get('data'),str) or not payload['data']:
+        raise ValueError('empty THS industry history')
+    rows=[]
+    for raw in payload['data'].split(';'):
+        parts=raw.split(',')
+        if len(parts) not in (11,12):
+            raise ValueError('malformed THS industry history row')
+        day=datetime.strptime(parts[0],'%Y%m%d').date()
+        if year is not None and day.year!=year:
+            raise ValueError('THS industry history year mismatch')
+        if start<=day<=end:
+            values=[_number(v) for v in parts[1:7]]
+            if (any(v is None for v in values) or min(values[:4])<=0
+                    or min(values[4:])<0 or values[1]<max(values[0],values[3])
+                    or values[2]>min(values[0],values[3]) or values[1]<values[2]):
+                raise ValueError('invalid THS industry OHLC or activity')
+            rows.append(dict(zip(('日期','开盘价','最高价','最低价','收盘价','成交量','成交额'),
+                (day.isoformat(),*values))))
+    return rows
 
 
 @serialized_supplemental_publication_v1
