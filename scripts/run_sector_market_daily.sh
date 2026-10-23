@@ -50,10 +50,11 @@ sys.exit(0 if stock and breadth else 3)
 PY
   then
     break
-  fi
-  status=$?
-  if [ "$status" -ne 3 ]; then
-    exit "$status"
+  else
+    status=$?
+    if [ "$status" -ne 3 ]; then
+      exit "$status"
+    fi
   fi
   attempt=$((attempt + 1))
   sleep 30
