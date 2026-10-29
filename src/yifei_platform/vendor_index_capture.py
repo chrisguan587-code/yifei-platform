@@ -35,8 +35,10 @@ def publish_vendor_index_capture_v1(*, client, market_database_path, target_path
         raise ValueError('industry_directory_incomplete_or_wrong_taxonomy')
     rows = _collect_rows(client=client,boards=boards,
         start_date=_prior_calendar_date(market_database_path,days[0]),end_date=as_of,expected_dates=set(days))
-    if {(r[0],r[2]) for r in rows} != {(code,day) for code,name in boards for day in days}:
-        raise ValueError('industry_index_window_incomplete')
+    actual = {(r[0],r[2]) for r in rows}
+    missing = [(code,day) for code,name in boards for day in days if (code,day) not in actual]
+    if missing:
+        raise ValueError('industry_index_window_incomplete: '+json.dumps(missing))
     membership = SectorMembershipReaderV1(target_path,sector_level='THS_L2').read_as_of(as_of)
     if not membership.ok:
         raise ValueError('industry_membership_unavailable')

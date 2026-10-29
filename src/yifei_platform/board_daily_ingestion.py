@@ -12,6 +12,7 @@ import tempfile
 import re
 import time
 from html import unescape
+from zoneinfo import ZoneInfo
 from typing import Mapping, Protocol, Sequence
 
 from .supplemental_facts import (
@@ -97,10 +98,39 @@ class AkshareThsBoardDailyClientV1:
             text=_get(f'https://d.10jqka.com.cn/v4/line/bk_{codes[0]}/01/last.js',
                 time.monotonic()+45)
             rows.extend(_parse_ths_history(text,callback,end,end))
+        if end.isoformat() not in {r['日期'] for r in rows}:
+            now = datetime.now(ZoneInfo('Asia/Shanghai'))
+            if now.date() == end and now.hour >= 15:
+                code = codes[0]
+                text = _get(f'https://d.10jqka.com.cn/v4/line/bk_{code}/01/today.js',
+                            time.monotonic()+45)
+                rows.append(_parse_ths_today(text, code, board_name, end))
         dates = [r['日期'] for r in rows]
         if dates != sorted(set(dates)):
             raise ValueError('duplicated or unordered THS industry history')
         return tuple(rows)
+
+
+def _parse_ths_today(text, code, name, day):
+    """Same vendor/index, confirmed close only; never manufacture a history row."""
+    callback = f'quotebridge_v4_line_bk_{code}_01_today'
+    match = re.fullmatch(re.escape(callback)+r'\((\{.*\})\)\s*;?\s*', text.strip(), re.S)
+    if not match:
+        raise ValueError('malformed THS industry today wrapper')
+    payload = json.loads(match[1])
+    if set(payload) != {f'bk_{code}'}:
+        raise ValueError('THS industry today identity mismatch')
+    row = payload[f'bk_{code}']
+    if row.get('1') != day.strftime('%Y%m%d') or row.get('name') != name:
+        raise ValueError('THS industry today date or name mismatch')
+    stamp = str(row.get('dt', ''))
+    if not re.fullmatch(r'\d{4}', stamp) or not (15 <= int(stamp[:2]) <= 23 and int(stamp[2:]) < 60):
+        raise ValueError('THS industry today close not confirmed')
+    # Reuse the history parser's finite OHLC/activity validation.
+    fields = [row.get(k, '') for k in ('1','7','8','9','11','13','19')]
+    history = ','.join(str(v) for v in fields)+',,,,0'
+    return _parse_ths_history(callback+'('+json.dumps({'data': history})+')',
+                              callback, day, day)[0]
 
 
 def _parse_ths_history(text, callback, start, end, *, year=None):
