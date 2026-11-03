@@ -13,6 +13,7 @@ ATR_DAYS = 20
 REVERSAL_ATR = 2.0
 MIN_LEG_INTERVALS = 3
 RECENT_CONTRACT = 'platform-recent-center.three-calendar-months.v1'
+WARMUP_POLICY = 'platform-center-warmup.restart-before-window.v1'
 
 
 def recent_center(rows, as_of, *, sessions):
@@ -24,10 +25,29 @@ def recent_center(rows, as_of, *, sessions):
     before=sorted(day for day in sessions if day<window_start)
     # The extra 20 sessions initialize volatility only; a center cannot start there.
     history_start=before[-ATR_DAYS] if len(before)>=ATR_DAYS else before[0] if before else window_start
-    bars=[r for r in rows if history_start<=r['trade_date']<=as_of]
+    bars=sorted((r for r in rows if history_start<=r['trade_date']<=as_of),key=lambda r:r['trade_date'])
     result=trace(bars,as_of,sessions=sessions)
+    resets=[]
+    # Never join price segments across a break. Only discard faulty pre-window
+    # initialization; trace still validates every bar within the actual window.
+    while (result['status'] in {'price_lineage_invalid','invalid_price','invalid_nontrading_bar'}
+           and result.get('invalid_at','9999')<window_start):
+        invalid_at=result['invalid_at']
+        keep_boundary=result['status']=='price_lineage_invalid'
+        tail=[r for r in bars if r['trade_date']>invalid_at
+              or (keep_boundary and r['trade_date']==invalid_at)]
+        if not tail or len(tail)>=len(bars):
+            break
+        resets.append(dict(status=result['status'],invalid_at=invalid_at,
+                           restart_at=tail[0]['trade_date']))
+        bars=tail
+        result=trace(bars,as_of,sessions=sessions)
     result.update(window_contract=RECENT_CONTRACT,window_start=window_start,
                   history_start=history_start,warmup_sessions=min(len(before),ATR_DAYS))
+    if resets:
+        result.update(warmup_policy_version=WARMUP_POLICY,warmup_resets=resets,
+                      effective_history_start=bars[0]['trade_date'],
+                      warmup_sessions=sum(r['trade_date']<window_start for r in bars))
     if not result['daily']:
         return result
     if result['status'] not in ('ready','no_confirmed_center','history_insufficient'):

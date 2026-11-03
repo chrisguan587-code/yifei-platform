@@ -65,6 +65,48 @@ class CenterFactsTest(unittest.TestCase):
         self.assertEqual(self.publish(published_at='2026-10-22T18:00:00+08:00'),first)
         self.assertEqual((self.output/f'{self.day}.json').read_bytes(),before)
 
+    def test_warmup_restart_policy_and_diagnostics_survive_publication(self):
+        from yifei_platform.consolidation_center import WARMUP_POLICY
+        code=self.fixture['cases'][0]['stock_code']
+        with sqlite3.connect(self.market) as c:
+            c.execute('UPDATE stock_daily SET preclose=preclose*0.5 WHERE stock_code=? AND trade_date=?',
+                      (code,'2026-06-25'))
+        payload=self.publish()
+        self.assertEqual(payload['warmup_policy_version'],WARMUP_POLICY)
+        fact=read_stock_center_v1(self.output,as_of=self.day,stock_code=code)
+        self.assertEqual(fact['diagnostics']['warmup_resets'][0]['invalid_at'],'2026-06-25')
+        self.assertEqual(fact['diagnostics']['effective_history_start'],'2026-06-25')
+        self.assertNotEqual(fact['status'],'price_lineage_invalid')
+
+    def test_correction_keeps_original_and_is_visible_only_after_publication(self):
+        original=self.publish();path=self.output/f'{self.day}.json';before=path.read_bytes()
+        corrected=self.publish(correct_warmup=True,published_at='2026-10-21T20:00:00+08:00')
+        self.assertEqual(path.read_bytes(),before)
+        self.assertEqual(corrected['correction']['reason'],'pre_window_warmup_restart')
+        self.assertEqual(read_center_snapshot_v1(self.output,as_of=self.day),corrected)
+        self.assertEqual(read_center_snapshot_v1(self.output,as_of=self.day,
+            known_at='2026-10-21T19:00:00+08:00'),original)
+        self.assertEqual(read_center_snapshot_v1(self.output,as_of=self.day,
+            known_at='2026-10-21T20:00:00+08:00'),corrected)
+        self.assertIsNone(read_center_snapshot_v1(self.output,as_of=self.day,
+            known_at='2026-10-21T17:00:00+08:00'))
+        self.assertEqual(self.publish(correct_warmup=True,published_at='2026-10-22T20:00:00+08:00'),corrected)
+
+    def test_correction_cannot_hide_changed_inputs_or_missing_original(self):
+        with self.assertRaises(ValueError):self.publish(correct_warmup=True)
+        self.publish()
+        with sqlite3.connect(self.market) as c:
+            c.execute('UPDATE stock_daily SET high=high+1 WHERE trade_date=?',(self.day,))
+        with self.assertRaises(DataNotReadyError):
+            self.publish(correct_warmup=True,published_at='2026-10-21T20:00:00+08:00')
+
+    def test_corrupt_correction_is_not_silently_replaced_by_original(self):
+        self.publish();self.publish(correct_warmup=True,published_at='2026-10-21T20:00:00+08:00')
+        path=self.output/f'{self.day}.warmup-restart-v1.json'
+        broken=json.loads(path.read_text());broken['payload']['status']='wrong'
+        path.write_text(json.dumps(broken))
+        with self.assertRaises(ArtifactIntegrityError):read_center_snapshot_v1(self.output,as_of=self.day)
+
     def test_missing_stock_or_date_never_falls_back(self):
         self.publish()
         self.assertIsNone(read_center_snapshot_v1(self.output,as_of='2026-10-20'))

@@ -10,7 +10,7 @@ import sqlite3
 from zoneinfo import ZoneInfo
 
 from .artifacts import ArtifactEnvelopeV1, ArtifactIntegrityError, ArtifactStoreV1, write_immutable_json_v1
-from .consolidation_center import CONTRACT, RECENT_CONTRACT, recent_center
+from .consolidation_center import CONTRACT, RECENT_CONTRACT, WARMUP_POLICY, recent_center
 from .readiness import DataNotReadyError, ReadinessStoreV1
 
 
@@ -18,12 +18,10 @@ SCHEMA = 'platform-consolidation-centers.daily.v1'
 PRODUCER = 'platform-consolidation-centers.v1'
 
 
-def read_center_snapshot_v1(root: Path, *, as_of: str):
-    """Exact-date read. Never substitute latest/previous-day data."""
-    day=date.fromisoformat(as_of).isoformat()
-    if not (root/f'{day}.json').exists():
+def _read_center_file(root, filename, day):
+    if not (root/filename).exists():
         return None
-    envelope=ArtifactStoreV1(root).read(f'{day}.json')
+    envelope=ArtifactStoreV1(root).read(filename)
     if (envelope.as_of!=day or envelope.producer!='platform-consolidation-centers'
             or envelope.payload_schema!=SCHEMA or envelope.payload_schema_version!='1'):
         raise ArtifactIntegrityError('unsupported consolidation center snapshot identity')
@@ -32,6 +30,31 @@ def read_center_snapshot_v1(root: Path, *, as_of: str):
             or payload.get('algorithm_version')!=CONTRACT or payload.get('window_contract')!=RECENT_CONTRACT):
         raise ArtifactIntegrityError('center payload schema/date/algorithm mismatch')
     return payload
+
+
+def read_center_snapshot_v1(root: Path, *, as_of: str, known_at: str | None = None):
+    """Exact-date facts; optional cutoff prevents later corrections leaking into replay."""
+    day=date.fromisoformat(as_of).isoformat()
+    cutoff=datetime.fromisoformat(known_at) if known_at is not None else None
+    if cutoff is not None and cutoff.tzinfo is None:
+        raise ValueError('known_at requires timezone')
+    original=_read_center_file(root,f'{day}.json',day)
+    if original is None:
+        return None
+    corrected=_read_center_file(root,f'{day}.warmup-restart-v1.json',day)
+    if corrected is not None:
+        reference=corrected.get('correction') or {}
+        original_id=ArtifactStoreV1(root).read(f'{day}.json').artifact_id
+        if (reference.get('schema_version')!='platform-center-correction.v1'
+                or reference.get('original_artifact_id')!=original_id
+                or reference.get('reason')!='pre_window_warmup_restart'
+                or corrected.get('warmup_policy_version')!=WARMUP_POLICY
+                or corrected['source']['input_rows_sha256']!=original['source']['input_rows_sha256']
+                or datetime.fromisoformat(corrected['published_at'])<=datetime.fromisoformat(original['published_at'])):
+            raise ArtifactIntegrityError('center correction identity/input/publication mismatch')
+        if cutoff is None or datetime.fromisoformat(corrected['published_at'])<=cutoff:
+            return corrected
+    return original if cutoff is None or datetime.fromisoformat(original['published_at'])<=cutoff else None
 
 
 def read_stock_center_v1(root: Path, *, as_of: str, stock_code: str):
@@ -44,7 +67,8 @@ def read_stock_center_v1(root: Path, *, as_of: str, stock_code: str):
 
 def publish_center_facts_v1(*, market_db: Path, exchange_calendar: Path,
                             readiness_root: Path, output_root: Path,
-                            as_of: str, published_at: str, historical_reconstruction: bool = False):
+                            as_of: str, published_at: str, historical_reconstruction: bool = False,
+                            correct_warmup: bool = False):
     date.fromisoformat(as_of)
     clock=datetime.fromisoformat(published_at)
     if clock.tzinfo is None:
@@ -52,9 +76,15 @@ def publish_center_facts_v1(*, market_db: Path, exchange_calendar: Path,
     local=clock.astimezone(ZoneInfo('Asia/Shanghai'))
     if local.date().isoformat()<as_of or (local.date().isoformat()==as_of and local.time()<time(15)):
         raise ValueError('centers may only be published after the as_of session closes')
+    original=_read_center_file(output_root,f'{as_of}.json',as_of)
+    if correct_warmup and original is None:
+        raise ValueError('warmup correction requires an existing original snapshot')
+    filename=f'{as_of}.warmup-restart-v1.json' if correct_warmup else f'{as_of}.json'
     existing=read_center_snapshot_v1(output_root,as_of=as_of)
-    if existing is not None:
+    if existing is not None and (not correct_warmup or existing.get('correction')):
         return existing
+    if correct_warmup and clock<=datetime.fromisoformat(original['published_at']):
+        raise ValueError('correction must be published after original')
     calendar=json.loads(exchange_calendar.read_text())
     if calendar.get('schema_version')!='exchange-trading-calendar.v1':
         raise ValueError('unsupported exchange calendar')
@@ -97,13 +127,15 @@ def publish_center_facts_v1(*, market_db: Path, exchange_calendar: Path,
                 center_history=[c for c in result['centers'] if c['points'][0]['date']>=bounds['window_start']],
                 departures=[e for e in result['events'] if e['type']=='close_departure'],
                 diagnostics={k:result[k] for k in ('invalid_at','missing_sessions','active_history_days',
-                    'first_source_date','pending_extreme') if k in result})
+                    'first_source_date','pending_extreme','warmup_resets','effective_history_start',
+                    'warmup_sessions','warmup_policy_version') if k in result})
     if not stocks:
         raise DataNotReadyError('no stocks in recent published universe')
     counts=dict(Counter(item['status'] for item in stocks.values()))
     expected={'ready','no_confirmed_center','history_insufficient'}
     payload=dict(schema_version=SCHEMA,as_of=as_of,published_at=published_at,
         algorithm_version=CONTRACT,window_contract=RECENT_CONTRACT,
+        warmup_policy_version=WARMUP_POLICY,
         window_start=bounds['window_start'],history_start=bounds['history_start'],
         universe='all published A-share codes with daily rows in the three-calendar-month window',
         source=dict(market_db=str(market_db.resolve()),metadata=metadata,
@@ -114,11 +146,18 @@ def publish_center_facts_v1(*, market_db: Path, exchange_calendar: Path,
         status='degraded' if any(s not in expected for s in counts) else 'ready',stocks=stocks)
     if historical_reconstruction:
         payload['input_semantics']='historical_reconstruction'
+    if correct_warmup:
+        if payload['source']['input_rows_sha256']!=original['source']['input_rows_sha256']:
+            raise DataNotReadyError('warmup correction requires unchanged original input rows')
+        payload['correction']=dict(schema_version='platform-center-correction.v1',
+            reason='pre_window_warmup_restart',artifact_ref=str((output_root/filename).resolve()),
+            original_artifact_id=ArtifactStoreV1(output_root).read(f'{as_of}.json').artifact_id,
+            original_published_at=original['published_at'])
     envelope=ArtifactEnvelopeV1.create(artifact_type='consolidation-centers',
         producer='platform-consolidation-centers',producer_version=PRODUCER,
         payload_schema=SCHEMA,payload_schema_version='1',as_of=as_of,created_at=published_at,
         source_refs=(str(market_db.resolve()),str(exchange_calendar.resolve()),ready.marker_id),payload=payload)
-    write_immutable_json_v1(output_root/f'{as_of}.json',envelope.as_dict())
+    write_immutable_json_v1(output_root/filename,envelope.as_dict())
     return payload
 
 
@@ -133,6 +172,8 @@ def main():
     parser.add_argument('--readiness-root',type=Path)
     parser.add_argument('--historical-reconstruction',action='store_true',
         help='Reconstruct past facts using rows through as_of; retain the actual publication time.')
+    parser.add_argument('--correct-warmup',action='store_true',
+        help='Publish immutable warmup fix beside an existing snapshot; require identical source rows.')
     args=parser.parse_args()
     if args.stock_code:
         print(json.dumps(read_stock_center_v1(args.output_root,as_of=args.as_of,
@@ -143,7 +184,7 @@ def main():
     result=publish_center_facts_v1(market_db=args.market_db,exchange_calendar=args.exchange_calendar,
         readiness_root=args.readiness_root,output_root=args.output_root,as_of=args.as_of,
         published_at=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(),
-        historical_reconstruction=args.historical_reconstruction)
+        historical_reconstruction=args.historical_reconstruction,correct_warmup=args.correct_warmup)
     print(json.dumps({k:result[k] for k in ('as_of','status','stock_count','status_counts')},ensure_ascii=False))
 
 

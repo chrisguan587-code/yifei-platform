@@ -183,6 +183,58 @@ class CenterAutomationTest(unittest.TestCase):
         self.assertEqual(result['window_start'],'2026-02-28')
         self.assertEqual(result['status'],'history_insufficient')
 
+    def test_warmup_lineage_break_restarts_without_crossing_the_break(self):
+        fixture=self.confirmed_cases();rows=deepcopy(fixture['cases'][0]['rows'])
+        baseline=recent_center(rows,fixture['as_of'],sessions=fixture['sessions'])
+        warmup=[r for r in rows if baseline['history_start']<=r['trade_date']<baseline['window_start']]
+        broken=warmup[3];broken['preclose']=broken['preclose']*0.5
+        result=recent_center(rows,fixture['as_of'],sessions=fixture['sessions'])
+        tail=[r for r in rows if r['trade_date']>=broken['trade_date']]
+        expected=trace(tail,fixture['as_of'],sessions=fixture['sessions'])
+        self.assertNotEqual(result['status'],'price_lineage_invalid')
+        self.assertEqual(result['daily'],expected['daily'])
+        self.assertEqual(result['warmup_resets'][0]['invalid_at'],broken['trade_date'])
+        self.assertEqual(result['effective_history_start'],broken['trade_date'])
+        self.assertTrue(all(p['date']>=result['window_start'] for c in result['centers']
+                            if c['points'][0]['date']>=result['window_start'] for p in c['points']))
+
+    def test_inside_window_break_is_not_skipped_after_warmup_restart(self):
+        fixture=self.confirmed_cases();rows=deepcopy(fixture['cases'][0]['rows'])
+        baseline=recent_center(rows,fixture['as_of'],sessions=fixture['sessions'])
+        warmup=[r for r in rows if baseline['history_start']<=r['trade_date']<baseline['window_start']]
+        warmup[2]['preclose']*=0.5
+        inside=next(r for r in rows if r['trade_date']>=baseline['window_start'])
+        inside['preclose']*=0.5
+        result=recent_center(rows,fixture['as_of'],sessions=fixture['sessions'])
+        self.assertEqual(result['status'],'price_lineage_invalid')
+        self.assertEqual(result['invalid_at'],inside['trade_date'])
+        self.assertIsNone(result['center'])
+
+    def test_multiple_bad_warmup_segments_are_discarded_and_reported(self):
+        fixture=self.confirmed_cases();rows=deepcopy(fixture['cases'][0]['rows'])
+        bounds=recent_center(rows,fixture['as_of'],sessions=fixture['sessions'])
+        warmup=[r for r in rows if bounds['history_start']<=r['trade_date']<bounds['window_start']]
+        warmup[2]['preclose']*=0.5
+        warmup[6]['close']=0
+        before=deepcopy(rows)
+        result=recent_center(rows,fixture['as_of'],sessions=fixture['sessions'])
+        self.assertEqual(rows,before)
+        self.assertEqual([r['status'] for r in result['warmup_resets']],
+                         ['price_lineage_invalid','invalid_price'])
+        self.assertGreater(result['effective_history_start'],warmup[6]['trade_date'])
+        self.assertNotIn(result['status'],{'invalid_price','price_lineage_invalid'})
+
+    def test_short_post_break_history_does_not_manufacture_a_center(self):
+        rows=self.bars([10]*12)
+        for i,row in enumerate(rows):
+            row['trade_date']=((date(2026,7,1)+timedelta(days=i)).isoformat()
+                               if i<10 else f'2026-10-{i:02d}')
+        rows[8]['preclose']=1
+        result=recent_center(rows,'2026-10-11',sessions=[r['trade_date'] for r in rows])
+        self.assertIsNone(result['center'])
+        self.assertEqual(result['status'],'history_insufficient')
+        self.assertEqual(result['active_history_days'],4)
+
 
 if __name__=='__main__':
     unittest.main()
