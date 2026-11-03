@@ -1,0 +1,177 @@
+{
+  "schema_version": "human-stock-identities.v1",
+  "source_version": "user-confirmed-representatives.20261023.v1",
+  "source": "user_confirmation",
+  "confirmed_at": "2026-10-23T23:17:53.909747+08:00",
+  "semantics": "human_asserted_stable_market_identity_not_algorithmic_causality_or_recommendation",
+  "stocks": [
+    {
+      "direction": "光模块/CPO",
+      "stock_code": "300308",
+      "stock_name": "中际旭创",
+      "sub_direction": "高速光模块",
+      "role": "容量核心 / 稳定核心"
+    },
+    {
+      "direction": "光模块/CPO",
+      "stock_code": "300502",
+      "stock_name": "新易盛",
+      "sub_direction": "高速光模块",
+      "role": "容量核心 / 稳定核心"
+    },
+    {
+      "direction": "光模块/CPO",
+      "stock_code": "300394",
+      "stock_name": "天孚通信",
+      "sub_direction": "光器件 / 光引擎",
+      "role": "产业核心 / 弹性核心"
+    },
+    {
+      "direction": "PCB",
+      "stock_code": "002463",
+      "stock_name": "沪电股份",
+      "sub_direction": "AI服务器/交换机高速PCB",
+      "role": "容量核心"
+    },
+    {
+      "direction": "PCB",
+      "stock_code": "300476",
+      "stock_name": "胜宏科技",
+      "sub_direction": "AI算力高阶PCB/HDI",
+      "role": "弹性核心 / 趋势核心"
+    },
+    {
+      "direction": "PCB",
+      "stock_code": "002916",
+      "stock_name": "深南电路",
+      "sub_direction": "高端PCB / IC载板",
+      "role": "稳定核心"
+    },
+    {
+      "direction": "芯片",
+      "stock_code": "002371",
+      "stock_name": "北方华创",
+      "sub_direction": "半导体设备",
+      "role": "容量核心 / 稳定核心"
+    },
+    {
+      "direction": "芯片",
+      "stock_code": "603986",
+      "stock_name": "兆易创新",
+      "sub_direction": "存储 / MCU",
+      "role": "稳定核心"
+    },
+    {
+      "direction": "芯片",
+      "stock_code": "300782",
+      "stock_name": "卓胜微",
+      "sub_direction": "射频芯片",
+      "role": "细分代表"
+    },
+    {
+      "direction": "人形机器人",
+      "stock_code": "002050",
+      "stock_name": "三花智控",
+      "sub_direction": "执行器",
+      "role": "容量核心"
+    },
+    {
+      "direction": "人形机器人",
+      "stock_code": "601689",
+      "stock_name": "拓普集团",
+      "sub_direction": "执行器 / 机器人零部件",
+      "role": "容量核心"
+    },
+    {
+      "direction": "人形机器人",
+      "stock_code": "002896",
+      "stock_name": "中大力德",
+      "sub_direction": "减速器",
+      "role": "弹性核心 / 短线记忆"
+    },
+    {
+      "direction": "锂电池",
+      "stock_code": "300750",
+      "stock_name": "宁德时代",
+      "sub_direction": "动力/储能电池",
+      "role": "绝对容量核心"
+    },
+    {
+      "direction": "锂电池",
+      "stock_code": "002594",
+      "stock_name": "比亚迪",
+      "sub_direction": "电池 + 整车",
+      "role": "产业核心 / 容量核心"
+    },
+    {
+      "direction": "锂电池",
+      "stock_code": "300014",
+      "stock_name": "亿纬锂能",
+      "sub_direction": "动力/储能电池",
+      "role": "稳定核心"
+    },
+    {
+      "direction": "算力",
+      "stock_code": "000977",
+      "stock_name": "浪潮信息",
+      "sub_direction": "AI服务器",
+      "role": "容量核心 / 交易核心"
+    },
+    {
+      "direction": "算力",
+      "stock_code": "601138",
+      "stock_name": "工业富联",
+      "sub_direction": "AI服务器 / 算力硬件",
+      "role": "超大容量核心"
+    },
+    {
+      "direction": "算力",
+      "stock_code": "603019",
+      "stock_name": "中科曙光",
+      "sub_direction": "服务器 / 算力基础设施",
+      "role": "稳定核心"
+    },
+    {
+      "direction": "文化传媒",
+      "stock_code": "300364",
+      "stock_name": "中文在线",
+      "sub_direction": "数字阅读 / 短剧 / AI内容",
+      "role": "弹性核心"
+    },
+    {
+      "direction": "文化传媒",
+      "stock_code": "603533",
+      "stock_name": "掌阅科技",
+      "sub_direction": "数字阅读 / AI内容",
+      "role": "细分代表"
+    },
+    {
+      "direction": "文化传媒",
+      "stock_code": "300413",
+      "stock_name": "芒果超媒",
+      "sub_direction": "长视频 / 影视综艺",
+      "role": "容量核心"
+    },
+    {
+      "direction": "CRO",
+      "stock_code": "603259",
+      "stock_name": "药明康德",
+      "sub_direction": "综合CXO/CRDMO",
+      "role": "绝对容量核心"
+    },
+    {
+      "direction": "CRO",
+      "stock_code": "300759",
+      "stock_name": "康龙化成",
+      "sub_direction": "临床前+临床+CRO/CDMO",
+      "role": "稳定核心"
+    },
+    {
+      "direction": "CRO",
+      "stock_code": "300347",
+      "stock_name": "泰格医药",
+      "sub_direction": "临床CRO",
+      "role": "细分核心"
+    }
+  ]
+}
